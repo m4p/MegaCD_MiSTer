@@ -478,6 +478,10 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 );
 
 wire [35:0] EXT_BUS;
+wire        dbg_reg_wr;
+wire  [5:0] dbg_reg_addr;
+wire [15:0] dbg_reg_wdata;
+wire [15:0] dbg_reg_rdata;
 hps_ext hps_ext
 (
 	.clk_sys(clk_sys),
@@ -487,7 +491,12 @@ hps_ext hps_ext
 	.cdda_ready(MCD_CDDA_WR_READY),
 
 	.cd_in(cd_in),
-	.cd_out(cd_out)
+	.cd_out(cd_out),
+
+	.dbg_reg_wr(dbg_reg_wr),
+	.dbg_reg_addr(dbg_reg_addr),
+	.dbg_reg_wdata(dbg_reg_wdata),
+	.dbg_reg_rdata(dbg_reg_rdata)
 );
 
 reg dbg_menu = 0;
@@ -595,12 +604,90 @@ wire EN_VDP_BGB  = ~status[37] | ~dbg_menu;
 wire EN_VDP_SPR  = ~status[38] | ~dbg_menu;
 wire MCD_BANK23  = ~status[39] | ~dbg_menu;
 
+wire        dbg_pause_req;
+wire        dbg_pause_ack_gen;
+wire        dbg_pause_ack_mcd;
+
+wire        dbg_sdr_hold;
+wire        dbg_sdr_req;
+wire [24:1] dbg_sdr_addr;
+wire        dbg_sdr_rd;
+wire        dbg_sdr_wrl;
+wire        dbg_sdr_wrh;
+wire [15:0] dbg_sdr_din;
+wire [15:0] dbg_sdr_dout;
+wire        dbg_sdr_busy;
+wire        dbg_sdr_grant;
+
+wire        dbg_bram_hold;
+wire        dbg_bram_req;
+wire        dbg_bram_we;
+wire [11:0] dbg_bram_addr;
+wire [15:0] dbg_bram_din;
+wire [15:0] dbg_bram_dout;
+wire        dbg_bram_ack;
+wire        dbg_bram_grant;
+
+wire        dbg_word_req;
+wire        dbg_word_we;
+wire        dbg_word_bank;
+wire [15:0] dbg_word_addr;
+wire [15:0] dbg_word_din;
+wire [15:0] dbg_word_dout;
+wire        dbg_word_ack;
+
 wire gg_available1;
+
+mcd_debug_bridge dbg_bridge
+(
+	.clk_sys(clk_sys),
+	.reset(reset),
+
+	.dbg_reg_wr(dbg_reg_wr),
+	.dbg_reg_addr(dbg_reg_addr),
+	.dbg_reg_wdata(dbg_reg_wdata),
+	.dbg_reg_rdata(dbg_reg_rdata),
+
+	.mcd_bank23(MCD_BANK23),
+
+	.pause_req(dbg_pause_req),
+	.gen_pause_ack(dbg_pause_ack_gen),
+	.mcd_pause_ack(dbg_pause_ack_mcd),
+
+	.sdr_hold(dbg_sdr_hold),
+	.sdr_req(dbg_sdr_req),
+	.sdr_addr(dbg_sdr_addr),
+	.sdr_rd(dbg_sdr_rd),
+	.sdr_wrl(dbg_sdr_wrl),
+	.sdr_wrh(dbg_sdr_wrh),
+	.sdr_din(dbg_sdr_din),
+	.sdr_dout(dbg_sdr_dout),
+	.sdr_busy(dbg_sdr_busy),
+	.sdr_grant(dbg_sdr_grant),
+
+	.bram_hold(dbg_bram_hold),
+	.bram_req(dbg_bram_req),
+	.bram_we(dbg_bram_we),
+	.bram_addr(dbg_bram_addr),
+	.bram_din(dbg_bram_din),
+	.bram_dout(dbg_bram_dout),
+	.bram_ack(dbg_bram_ack),
+	.bram_grant(dbg_bram_grant),
+
+	.word_req(dbg_word_req),
+	.word_we(dbg_word_we),
+	.word_bank(dbg_word_bank),
+	.word_addr(dbg_word_addr),
+	.word_din(dbg_word_din),
+	.word_dout(dbg_word_dout),
+	.word_ack(dbg_word_ack)
+);
 
 gen gen
 (
 	.RESET_N(~reset),
 	.MCLK(clk_sys),
+	.PAUSE_REQ(dbg_pause_req),
 	
 	.VA(GEN_VA),
 	.VDI(GEN_VDI),
@@ -693,7 +780,8 @@ gen gen
 	.GG_RESET(code_download && ioctl_wr && !ioctl_addr),
 	.GG_EN(status[24]),
 	.GG_CODE({~gg_code[95] & gg_code[128], gg_code[127:0]}),
-	.GG_AVAILABLE(gg_available1)
+	.GG_AVAILABLE(gg_available1),
+	.PAUSE_ACK(dbg_pause_ack_gen)
 );
 
 wire TRANSP_DETECT;
@@ -804,7 +892,17 @@ MCD MCD
 	.GG_RESET(code_download && ioctl_wr && !ioctl_addr),
 	.GG_EN(status[24]),
 	.GG_CODE({gg_code[95] & gg_code[128], gg_code[127:0]}),
-	.GG_AVAILABLE(gg_available2)
+	.GG_AVAILABLE(gg_available2),
+
+	.DEBUG_PAUSE(dbg_pause_req & dbg_pause_ack_mcd),
+	.DEBUG_IDLE(dbg_pause_ack_mcd),
+	.DEBUG_WORD_REQ(dbg_word_req),
+	.DEBUG_WORD_WE(dbg_word_we),
+	.DEBUG_WORD_BANK(dbg_word_bank),
+	.DEBUG_WORD_ADDR(dbg_word_addr),
+	.DEBUG_WORD_DIN(dbg_word_din),
+	.DEBUG_WORD_DOUT(dbg_word_dout),
+	.DEBUG_WORD_ACK(dbg_word_ack)
 );
 
 localparam [3:0] comp_f1 = 4;
@@ -936,6 +1034,16 @@ ddram ddram
 //MCD PRGRAM, GEN ROM/RAM/CART RAM
 wire sdr_busy;
 wire [15:0] sdr_do;
+wire [24:1] sdr_addr2 = dbg_sdr_hold ? dbg_sdr_addr :
+							 (rom_download ? (rom_cart_mode ? {2'b00,ioctl_addr[22:1]} : {6'b011110,ioctl_addr[18:1]}) :
+							                {5'b01110,tmpram_lba[9:0],tmpram_addr});
+wire [15:0] sdr_din2 = dbg_sdr_hold ? dbg_sdr_din :
+							 (rom_download ? {ioctl_data[7:0],ioctl_data[15:8]} : {tmpram_dout,tmpram_dout});
+wire        sdr_rd2 = dbg_sdr_hold ? dbg_sdr_rd : (~rom_download & tmpram_req & ~bk_loading);
+wire        sdr_wrl2 = dbg_sdr_hold ? dbg_sdr_wrl : (rom_download ? ioctl_wait : (tmpram_req & bk_loading));
+wire        sdr_wrh2 = dbg_sdr_hold ? dbg_sdr_wrh : (rom_download ? ioctl_wait : (tmpram_req & bk_loading));
+wire [15:0] sdr_port2_dout;
+wire        sdr_port2_busy;
 sdram sdram
 (
 	.*,
@@ -964,18 +1072,17 @@ sdram sdram
 	.busy1(GEN_MEM_BUSY),
 
 	//Load/Save: banks 0,1
-	.addr2( rom_download ? (rom_cart_mode ? {2'b00,ioctl_addr[22:1]} : {6'b011110,ioctl_addr[18:1]}) : //ROM  000000-7FFFFF/F00000-F7FFFF
-								  {5'b01110,tmpram_lba[9:0],tmpram_addr}),    //CART RAM E00000-EFFFFF for sd_*
-	.din2(rom_download ? {ioctl_data[7:0],ioctl_data[15:8]} : {tmpram_dout,tmpram_dout}),
-	.dout2(tmpram_din),
-	.rd2(~rom_download & tmpram_req & ~bk_loading),
-	.wrl2(rom_download ? ioctl_wait : (tmpram_req & bk_loading)),
-	.wrh2(rom_download ? ioctl_wait : (tmpram_req & bk_loading)),
-	.busy2(tmpram_busy)
+	.addr2(sdr_addr2),
+	.din2(sdr_din2),
+	.dout2(sdr_port2_dout),
+	.rd2(sdr_rd2),
+	.wrl2(sdr_wrl2),
+	.wrh2(sdr_wrh2),
+	.busy2(sdr_port2_busy)
 );
 
-
-wire [15:0] bram_sd_buff_data;
+wire [15:0] bram_portb_q;
+assign dbg_bram_dout = bram_portb_q;
 dpram_dif #(13,8,12,16) bram
 (
 	.clock(clk_sys),
@@ -984,15 +1091,22 @@ dpram_dif #(13,8,12,16) bram
 	.wren_a(PIER_QUIRK ? m95_we : MCD_BRAM_WE),
 	.q_a(MCD_BRAM_DI),
 
-	.address_b({sd_lba[0][3:0],sd_buff_addr}),
-	.data_b(sd_buff_dout),
-	.wren_b(sd_buff_wr & sd_ack & !sd_lba[0][10:4]),
-	.q_b(bram_sd_buff_data)
+	.address_b(dbg_bram_hold ? dbg_bram_addr : {sd_lba[0][3:0],sd_buff_addr}),
+	.data_b(dbg_bram_hold ? dbg_bram_din : sd_buff_dout),
+	.wren_b(dbg_bram_hold ? dbg_bram_we : (sd_buff_wr & sd_ack & !sd_lba[0][10:4])),
+	.q_b(bram_portb_q)
 );
 
+wire [15:0] bram_sd_buff_data = bram_portb_q;
+reg dbg_bram_ack_r;
+always @(posedge clk_sys) dbg_bram_ack_r <= dbg_bram_req;
+assign dbg_bram_ack = dbg_bram_ack_r;
+
 wire [7:0] tmpram_dout;
-wire [7:0] tmpram_din;
-wire       tmpram_busy;
+wire [7:0] tmpram_din = sdr_port2_dout[7:0];
+wire       tmpram_busy = dbg_sdr_hold ? 1'b0 : sdr_port2_busy;
+assign dbg_sdr_dout = sdr_port2_dout;
+assign dbg_sdr_busy = sdr_port2_busy;
 
 wire [15:0] tmpram_sd_buff_data;
 dpram_dif #(9,8,8,16) tmpram
@@ -1016,6 +1130,8 @@ reg tmpram_tx_start;
 reg tmpram_tx_finish;
 reg tmpram_req;
 reg tmpram_busy_d;
+assign dbg_bram_grant = ~(sd_rd[0] | sd_wr[0] | sd_buff_wr | tmpram_tx_start);
+assign dbg_sdr_grant = ~rom_download & ~tmpram_req & ~tmpram_tx_start;
 always @(posedge clk_sys) begin
 	reg state;
 

@@ -97,7 +97,8 @@ entity ASIC is
 		FD_WR				: out std_logic;
 		
 		LED_RED			: out std_logic;
-		LED_GREEN		: out std_logic
+		LED_GREEN		: out std_logic;
+		DEBUG_IDLE      : out std_logic
 	);
 end ASIC;
 
@@ -2512,5 +2513,19 @@ begin
 	CLWE_N <= S68K_LDS_N or S68K_RNW;
 	CUWE_N <= S68K_UDS_N or S68K_RNW;
 	COE_N <= (S68K_LDS_N and S68K_UDS_N) or not S68K_RNW;
+
+	DEBUG_IDLE <= '1' when PRMS = PRS_IDLE and
+	                      PRSS = PRS_IDLE and
+	                      WR0A = WRA_IDLE and
+	                      WR1A = WRA_IDLE and
+	                      WR0S = WRS_IDLE and
+	                      WR1S = WRS_IDLE and
+	                      GS = GS_IDLE and
+	                      DS = DS_IDLE and
+	                      PCMA = PCMA_IDLE and
+	                      HS = HS_IDLE and
+	                      S68K_AS_N = '1' and
+	                      CDC_HRD = '0'
+	              else '0';
 	
 end rtl;

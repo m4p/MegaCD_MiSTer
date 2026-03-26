@@ -28,8 +28,15 @@ module hps_ext
 	output reg [48:0] cd_out,
 
 	input             cdda_ready,
-	input             cd_data_ready
+	input             cd_data_ready,
+
+	output reg        dbg_reg_wr,
+	output reg  [5:0] dbg_reg_addr,
+	output reg [15:0] dbg_reg_wdata,
+	input      [15:0] dbg_reg_rdata
 );
+
+`include "mcd_debug_defs.vh"
 
 assign EXT_BUS[15:0] = io_dout;
 wire [15:0] io_din = EXT_BUS[31:16];
@@ -37,11 +44,10 @@ assign EXT_BUS[32] = dout_en;
 wire io_strobe = EXT_BUS[33];
 wire io_enable = EXT_BUS[34];
 
-localparam EXT_CMD_MIN = CD_GET;
-localparam EXT_CMD_MAX = CD_SET;
-
 localparam CD_GET = 'h34;
 localparam CD_SET = 'h35;
+localparam DBG_REG_GET = `MCD_EXT_DBG_REG_GET;
+localparam DBG_REG_SET = `MCD_EXT_DBG_REG_SET;
 
 reg [15:0] io_dout;
 reg        dout_en = 0;
@@ -54,6 +60,7 @@ always@(posedge clk_sys) begin
 	reg  [1:0] get_cmd;
 	reg        send_data_type;
 
+	dbg_reg_wr <= 0;
 	old_cd <= cd_in[48];
 	if(old_cd ^ cd_in[48]) cd_req <= cd_req + 1'd1; 
 
@@ -70,7 +77,8 @@ always@(posedge clk_sys) begin
 
 		if(byte_cnt == 0) begin
 			cmd <= io_din;
-			dout_en <= (io_din >= EXT_CMD_MIN && io_din <= EXT_CMD_MAX);
+			dout_en <= (io_din == CD_GET) || (io_din == CD_SET) ||
+			           (io_din == DBG_REG_GET) || (io_din == DBG_REG_SET);
 			if(io_din == CD_GET) io_dout <= cd_req; 
 		end else begin
 			case(cmd)
@@ -100,6 +108,25 @@ always@(posedge clk_sys) begin
 							1: cd_out[15:0]  <= io_din;
 							2: cd_out[31:16] <= io_din;
 							3: cd_out[47:32] <= io_din;
+						endcase
+					end
+
+				DBG_REG_GET:
+					if(!byte_cnt[9:2]) begin
+						case(byte_cnt[1:0])
+							1: dbg_reg_addr <= io_din[5:0];
+							2: io_dout <= dbg_reg_rdata;
+						endcase
+					end
+
+				DBG_REG_SET:
+					if(!byte_cnt[9:2]) begin
+						case(byte_cnt[1:0])
+							1: dbg_reg_addr <= io_din[5:0];
+							2: begin
+								dbg_reg_wdata <= io_din;
+								dbg_reg_wr <= 1;
+							end
 						endcase
 					end
 			endcase

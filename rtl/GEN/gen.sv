@@ -37,6 +37,7 @@ module gen
 (
 	input         RESET_N,
 	input         MCLK,
+	input         PAUSE_REQ,
 	
 	output [23:1] VA,
 	input  [15:0] VDI,
@@ -136,11 +137,15 @@ module gen
 	output        GG_AVAILABLE,
 
 	output [23:0] DBG_M68K_A,
-	output [23:0] DBG_MBUS_A
+	output [23:0] DBG_MBUS_A,
+	output        PAUSE_ACK
 );
 
 reg reset;
-always @(posedge MCLK) if(M68K_CLKENn) reset <= ~RESET_N | LOADING;
+always @(posedge MCLK) begin
+	if(~RESET_N | LOADING) reset <= 1'b1;
+	else if(M68K_CLKENn)   reset <= 1'b0;
+end
 
 //--------------------------------------------------------------
 // CLOCK ENABLERS
@@ -148,6 +153,7 @@ always @(posedge MCLK) if(M68K_CLKENn) reset <= ~RESET_N | LOADING;
 wire M68K_CLKEN = M68K_CLKENp;
 reg  M68K_CLKENp, M68K_CLKENn;
 reg  Z80_CLKENp, Z80_CLKENn;
+reg  pause_latched;
 
 always @(negedge MCLK) begin
 	reg [3:0] VCLKCNT = 0;
@@ -160,6 +166,12 @@ always @(negedge MCLK) begin
 		Z80_CLKENn <= 0;
 		M68K_CLKENp <= 0;
 		M68K_CLKENn <= 1;
+	end
+	else if(pause_latched) begin
+		Z80_CLKENp <= 0;
+		Z80_CLKENn <= 0;
+		M68K_CLKENp <= 0;
+		M68K_CLKENn <= 0;
 	end
 	else begin
 		M68K_CLKENp <= 0;
@@ -627,6 +639,42 @@ localparam 	MBUS_IDLE         = 0,
 				MBUS_REFRESH      = 13,
 				MBUS_FINISH       = 14; 
 
+localparam 	ZSRC_MBUS = 0,
+				ZSRC_Z80  = 1;
+
+localparam	ZBUS_IDLE   = 0,
+				ZBUS_READ   = 1,
+				ZBUS_FINISH = 2;
+
+reg  [1:0] zstate;
+reg        zsrc;
+reg        Z80_BGACK_DIS;
+
+wire pause_can_latch = (mstate == MBUS_IDLE) &&
+							  (zstate == ZBUS_IDLE) &&
+							  M68K_AS_N &&
+							  Z80_MREQ_N &&
+							  !VBUS_SEL &&
+							  !ZBUS_SEL &&
+							  M68K_MBUS_DTACK_N &&
+							  Z80_MBUS_DTACK_N &&
+							  MBUS_ZBUS_DTACK_N &&
+							  Z80_ZBUS_DTACK_N;
+
+assign PAUSE_ACK = pause_latched;
+
+always @(posedge MCLK) begin
+	if (reset) begin
+		pause_latched <= 0;
+	end
+	else if (!PAUSE_REQ) begin
+		pause_latched <= 0;
+	end
+	else if (!pause_latched && pause_can_latch) begin
+		pause_latched <= 1;
+	end
+end
+
 always @(posedge MCLK) begin
 	reg [8:0] refresh_timer;
 	reg rfs_pend;
@@ -671,7 +719,7 @@ always @(posedge MCLK) begin
 					RFS <= 1;
 					mstate <= MBUS_REFRESH;
 				end
-				else*/ if (!M68K_AS_N && (!M68K_LDS_N || !M68K_UDS_N) && M68K_MBUS_DTACK_N) begin
+				else*/ if (!pause_latched && !M68K_AS_N && (!M68K_LDS_N || !M68K_UDS_N) && M68K_MBUS_DTACK_N) begin
 					msrc <= MSRC_M68K;
 					MBUS_A <= M68K_A[23:1];
 					MBUS_DO <= M68K_DO;
@@ -732,7 +780,7 @@ always @(posedge MCLK) begin
 						mstate <= MBUS_RAM_WAIT;
 					end
 				end
-				else if (VBUS_SEL && VDP_MBUS_DTACK_N) begin
+				else if (!pause_latched && VBUS_SEL && VDP_MBUS_DTACK_N) begin
 					msrc <= MSRC_VDP;
 					MBUS_A <= VBUS_A;
 					MBUS_DO <= 0;
@@ -756,7 +804,7 @@ always @(posedge MCLK) begin
 						mstate <= MBUS_RAM_WAIT;
 					end
 				end
-				else if (Z80_IO && !Z80_ZBUS && Z80_MBUS_DTACK_N && !Z80_BGACK_N && Z80_BR_N) begin
+				else if (!pause_latched && Z80_IO && !Z80_ZBUS && Z80_MBUS_DTACK_N && !Z80_BGACK_N && Z80_BR_N) begin
 					msrc <= MSRC_Z80;
 					MBUS_A <= Z80_A[15] ? {BAR[23:15],Z80_A[14:1]} : {16'hC000, Z80_A[7:1]};
 					MBUS_DO <= {Z80_DO,Z80_DO};
@@ -1041,23 +1089,13 @@ dpram #(13) ramZ80
 );
 
 always @(posedge MCLK) begin
-	reg [1:0] zstate;
-	reg [1:0] zsrc;
-	reg Z80_BGACK_DIS;
-
-	localparam 	ZSRC_MBUS = 0,
-					ZSRC_Z80  = 1;
-
-	localparam	ZBUS_IDLE   = 0,
-					ZBUS_READ   = 1,
-					ZBUS_FINISH = 2;
-
 	ZBUS_WE <= 0;
 	
 	if (reset) begin
 		MBUS_ZBUS_DTACK_N <= 1;
 		Z80_ZBUS_DTACK_N  <= 1;
 		zstate <= ZBUS_IDLE;
+		Z80_BGACK_DIS <= 0;
 	end
 	else begin
 		if (~ZBUS_SEL)     MBUS_ZBUS_DTACK_N <= 1;
@@ -1065,14 +1103,14 @@ always @(posedge MCLK) begin
 
 		case (zstate)
 		ZBUS_IDLE:
-			if (ZBUS_SEL & MBUS_ZBUS_DTACK_N) begin
+			if (!pause_latched && ZBUS_SEL & MBUS_ZBUS_DTACK_N) begin
 				ZBUS_A <= {MBUS_A[14:1], MBUS_UDS_N};
 				ZBUS_DO <= (~MBUS_UDS_N) ? MBUS_DO[15:8] : MBUS_DO[7:0];
 				ZBUS_WE <= ~MBUS_RNW & ZBUS_FREE;
 				zsrc <= ZSRC_MBUS;
 				zstate <= ZBUS_READ;
 			end
-			else if (Z80_ZBUS_SEL & Z80_ZBUS_DTACK_N) begin
+			else if (!pause_latched && Z80_ZBUS_SEL & Z80_ZBUS_DTACK_N) begin
 				ZBUS_A <= Z80_A[14:0];
 				ZBUS_DO <= Z80_DO;
 				ZBUS_WE <= ~Z80_WR_N;
@@ -1103,19 +1141,19 @@ always @(posedge MCLK) begin
 		endcase
 		
 		
-		if (Z80_MBUS_SEL && Z80_BR_N && Z80_BGACK_N && VBUS_BR_N && VBUS_BGACK_N && M68K_CLKENp) begin
+		if (!pause_latched && Z80_MBUS_SEL && Z80_BR_N && Z80_BGACK_N && VBUS_BR_N && VBUS_BGACK_N && M68K_CLKENp) begin
 			Z80_BR_N <= 0;
 		end
-		else if (!Z80_BR_N && !M68K_BG_N && VBUS_BR_N && VBUS_BGACK_N && M68K_AS_N && M68K_CLKENn) begin
+		else if (!pause_latched && !Z80_BR_N && !M68K_BG_N && VBUS_BR_N && VBUS_BGACK_N && M68K_AS_N && M68K_CLKENn) begin
 			Z80_BGACK_N <= 0;
 		end
-		else if (!Z80_BGACK_N && !Z80_BR_N && !M68K_BG_N && M68K_CLKENp) begin
+		else if (!pause_latched && !Z80_BGACK_N && !Z80_BR_N && !M68K_BG_N && M68K_CLKENp) begin
 			Z80_BR_N <= 1;
 		end
-		else if (!Z80_BGACK_DIS && !Z80_BGACK_N && Z80_BR_N && !Z80_MBUS_SEL && M68K_CLKENn) begin
+		else if (!pause_latched && !Z80_BGACK_DIS && !Z80_BGACK_N && Z80_BR_N && !Z80_MBUS_SEL && M68K_CLKENn) begin
 			Z80_BGACK_DIS <= 1;
 		end
-		else if (!Z80_BGACK_N && Z80_BGACK_DIS && M68K_CLKENn) begin
+		else if (!pause_latched && !Z80_BGACK_N && Z80_BGACK_DIS && M68K_CLKENn) begin
 			Z80_BGACK_N <= 1;
 			Z80_BGACK_DIS <= 0;
 		end
