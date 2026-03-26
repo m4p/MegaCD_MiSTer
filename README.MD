@@ -22,5 +22,11 @@ So DON'T zip the images!
 ### CD BIOS
 support BIOS per game. Place cd_bios.rom in game's folder.
 
+### Debug bridge
+Remote memory inspection and control for the running core is documented in `docs/debug-bridge.md`.
+The same document also includes build and runtime usage for `linux/debug_bridge/mcd_debugd`.
+It also documents the browser-facing Python server in `linux/debug_bridge/mcd_debug_web.py`.
+It also documents the local MCP server in `linux/debug_bridge/mcd_debug_mcp.py`.
+
 ### Pier Solar
 Place cartridge dump named cart.rom into game's folder

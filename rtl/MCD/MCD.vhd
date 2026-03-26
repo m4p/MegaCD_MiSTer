@@ -67,6 +67,16 @@ entity MCD is
 		GG_EN          : in std_logic;
 		GG_CODE        : in std_logic_vector(128 downto 0);
 		GG_AVAILABLE   : out std_logic;
+
+		DEBUG_PAUSE    : in std_logic;
+		DEBUG_IDLE     : out std_logic;
+		DEBUG_WORD_REQ : in std_logic;
+		DEBUG_WORD_WE  : in std_logic;
+		DEBUG_WORD_BANK: in std_logic;
+		DEBUG_WORD_ADDR: in std_logic_vector(15 downto 0);
+		DEBUG_WORD_DIN : in std_logic_vector(15 downto 0);
+		DEBUG_WORD_DOUT: out std_logic_vector(15 downto 0);
+		DEBUG_WORD_ACK : out std_logic;
 		
 		DBG_S68K_A		: out std_logic_vector(23 downto 0)
 	);
@@ -138,7 +148,31 @@ architecture rtl of MCD is
 	
 	signal ASIC_FD_DAT	: std_logic_vector(10 downto 0);
 	signal ASIC_FD_WR		: std_logic;
+	signal ASIC_DEBUG_IDLE: std_logic;
 
+	signal RUN_EN         : std_logic;
+
+	signal PRG_A_I        : std_logic_vector(17 downto 0);
+	signal PRG_DO_I       : std_logic_vector(15 downto 0);
+	signal PRG_WRL_N_I    : std_logic;
+	signal PRG_WRH_N_I    : std_logic;
+	signal PRG_OE_N_I     : std_logic;
+	signal PRG_RFS_I      : std_logic;
+	signal PCM_A_I        : std_logic_vector(12 downto 0);
+	signal PCM_DO_I       : std_logic_vector(7 downto 0);
+	signal PCM_WE_N_I     : std_logic;
+	signal PCM_N_I        : std_logic;
+
+	signal WORDRAM0_ADDR_I : std_logic_vector(15 downto 0);
+	signal WORDRAM0_DATA_I : std_logic_vector(15 downto 0);
+	signal WORDRAM0_WREN_I : std_logic;
+	signal WORDRAM1_ADDR_I : std_logic_vector(15 downto 0);
+	signal WORDRAM1_DATA_I : std_logic_vector(15 downto 0);
+	signal WORDRAM1_WREN_I : std_logic;
+
+	signal DEBUG_WORD_REQ_D  : std_logic;
+	signal DEBUG_WORD_BANK_D : std_logic;
+	
 	signal GENIE_DATA    : std_logic_vector(15 downto 0);
 	
 	component CODES
@@ -163,6 +197,8 @@ architecture rtl of MCD is
 	
 begin
 
+	RUN_EN <= ENABLE and not DEBUG_PAUSE;
+
 	gg : CODES
 	generic map(
 		ADDR_WIDTH  => 24,
@@ -186,8 +222,8 @@ begin
 		RST_N      	=> RST_N,
 		
 		RESET_I_N	=> S68K_RESET_N,
-		CLKEN_P   	=> S68K_CE_R,
-		CLKEN_N		=> S68K_CE_F,
+		CLKEN_P   	=> S68K_CE_R and not DEBUG_PAUSE,
+		CLKEN_N		=> S68K_CE_F and not DEBUG_PAUSE,
 		A   			=> S68K_A,
 		DI   			=> GENIE_DATA,
 		DO   			=> S68K_DO,
@@ -215,7 +251,7 @@ begin
 	port map(
 		CLK   			=> CLK,
 		RST_N       	=> RST_N,
-		ENABLE      	=> ENABLE,
+		ENABLE      	=> RUN_EN,
 		
 		S68K_A   		=> S68K_A(23 downto 1),
 		S68K_DI   		=> S68K_DO,
@@ -247,19 +283,19 @@ begin
 		EXT_ROM_N   	=> EXT_ROM_N,
 		EXT_FDC_N   	=> EXT_FDC_N,
 		
-		PRG_A   			=> PRG_A,
+		PRG_A   			=> PRG_A_I,
 		PRG_DI  			=> PRG_DI,
-		PRG_DO  			=> PRG_DO,
-		PRG_WRL_N  		=> PRG_WRL_N,
-		PRG_WRH_N  		=> PRG_WRH_N,
-		PRG_OE_N  		=> PRG_OE_N,
-		PRG_RFS  		=> PRG_RFS,
+		PRG_DO  			=> PRG_DO_I,
+		PRG_WRL_N  		=> PRG_WRL_N_I,
+		PRG_WRH_N  		=> PRG_WRH_N_I,
+		PRG_OE_N  		=> PRG_OE_N_I,
+		PRG_RFS  		=> PRG_RFS_I,
 		PRG_RDY  		=> PRG_RDY,
 		
-		PCM_A   			=> PCM_A,
+		PCM_A   			=> PCM_A_I,
 		PCM_DI   		=> PCM_DI,
-		PCM_WE_N   		=> PCM_WE_N,
-		PCM_N   			=> PCM_N,
+		PCM_WE_N   		=> PCM_WE_N_I,
+		PCM_N   			=> PCM_N_I,
 		
 		ROM_DI   		=> ROM_DI,
 		ROM_CE_N   		=> ROM_CE_N,
@@ -302,23 +338,47 @@ begin
 		FD_WR 			=> ASIC_FD_WR,
 		
 		LED_RED   		=> LED_RED,
-		LED_GREEN   	=> LED_GREEN
+		LED_GREEN   	=> LED_GREEN,
+		DEBUG_IDLE    => ASIC_DEBUG_IDLE
 	);
 	
 	MCD_RST_N <= ERES_N;
+	DEBUG_IDLE <= ASIC_DEBUG_IDLE;
+
+	PRG_A <= PRG_A_I;
+	PRG_DO <= PRG_DO_I;
+	PRG_WRL_N <= '1' when DEBUG_PAUSE = '1' else PRG_WRL_N_I;
+	PRG_WRH_N <= '1' when DEBUG_PAUSE = '1' else PRG_WRH_N_I;
+	PRG_OE_N <= '1' when DEBUG_PAUSE = '1' else PRG_OE_N_I;
+	PRG_RFS <= '0' when DEBUG_PAUSE = '1' else PRG_RFS_I;
+
+	PCM_A <= PCM_A_I;
+	PCM_DO <= PCM_DO_I;
+	PCM_WE_N <= '1' when DEBUG_PAUSE = '1' else PCM_WE_N_I;
+	PCM_N <= '1' when DEBUG_PAUSE = '1' else PCM_N_I;
 
 	BRAM_A <= S68K_A(13 downto 1);
 	BRAM_DO <= S68K_DO(7 downto 0);
-	BRAM_WE <= not (CLWE_N or BRAM_N);
+	BRAM_WE <= '0' when DEBUG_PAUSE = '1' else not (CLWE_N or BRAM_N);
+
+	WORDRAM0_ADDR_I <= DEBUG_WORD_ADDR when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '0' else WORDRAM0_A;
+	WORDRAM0_DATA_I <= DEBUG_WORD_DIN when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '0' else WORDRAM0_DO;
+	WORDRAM0_WREN_I <= DEBUG_WORD_WE when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '0' else
+	                   '0' when DEBUG_PAUSE = '1' else WORDRAM0_WR;
+
+	WORDRAM1_ADDR_I <= DEBUG_WORD_ADDR when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '1' else WORDRAM1_A;
+	WORDRAM1_DATA_I <= DEBUG_WORD_DIN when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '1' else WORDRAM1_DO;
+	WORDRAM1_WREN_I <= DEBUG_WORD_WE when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '1' else
+	                   '0' when DEBUG_PAUSE = '1' else WORDRAM1_WR;
 	
 	
 	WORDRAM0 : entity work.spram
 	generic map(16,16)
 	port map(
 		clock		=> CLK,
-		address	=> WORDRAM0_A,
-		data		=> WORDRAM0_DO,
-		wren		=> WORDRAM0_WR,
+		address	=> WORDRAM0_ADDR_I,
+		data		=> WORDRAM0_DATA_I,
+		wren		=> WORDRAM0_WREN_I,
 		q			=> WORDRAM0_DI
 	);
 
@@ -326,18 +386,34 @@ begin
 	generic map(16,16)
 	port map(
 		clock		=> CLK,
-		address	=> WORDRAM1_A,
-		data		=> WORDRAM1_DO,
-		wren		=> WORDRAM1_WR,
+		address	=> WORDRAM1_ADDR_I,
+		data		=> WORDRAM1_DATA_I,
+		wren		=> WORDRAM1_WREN_I,
 		q			=> WORDRAM1_DI
 	);
+
+	process( RST_N, CLK )
+	begin
+		if RST_N = '0' then
+			DEBUG_WORD_REQ_D <= '0';
+			DEBUG_WORD_BANK_D <= '0';
+		elsif rising_edge(CLK) then
+			DEBUG_WORD_REQ_D <= DEBUG_PAUSE and DEBUG_WORD_REQ;
+			if DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' then
+				DEBUG_WORD_BANK_D <= DEBUG_WORD_BANK;
+			end if;
+		end if;
+	end process;
+
+	DEBUG_WORD_ACK <= DEBUG_WORD_REQ_D;
+	DEBUG_WORD_DOUT <= WORDRAM1_DI when DEBUG_WORD_BANK_D = '1' else WORDRAM0_DI;
 	
 	
 	CDC : entity work.CDC
 	port map(
 		CLK   		=> CLK,
 		RESET_N     => ERES_N,
-		ENABLE      => ENABLE,
+		ENABLE      => RUN_EN,
 		
 		CLKEN_P   	=> S68K_CE_R,
 		CLKEN_N		=> S68K_CE_F,
@@ -381,7 +457,7 @@ begin
 	port map(
 		CLK   		=> CLK,
 		RST_N       => ERES_N,
-		ENABLE      => ENABLE,
+		ENABLE      => RUN_EN,
 		PALSW			=> PALSW,
 		
 		CLKEN			=> S68K_CE_F,
@@ -420,7 +496,7 @@ begin
 	port map(
 		CLK   		=> CLK,
 		RST_N       => ERES_N,
-		ENABLE      => '1',
+		ENABLE      => RUN_EN,
 		
 		PALSW			=> PALSW,
 		

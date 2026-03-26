@@ -8,6 +8,7 @@ scaler
 hps_isw_handoff
 vip
 *_sim
+.worktrees
 .qsys_edit
 PLLJ_PLLSPE_INFO.txt
 *.bak
@@ -37,3 +38,4 @@ c5_pin_model_dump.txt
 *.xml
 *_netlist
 *.cdf
+.DS_Store
