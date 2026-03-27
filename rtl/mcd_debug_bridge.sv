@@ -92,9 +92,9 @@ reg [31:0] op_wdata;
 reg [31:0] op_index;
 reg [7:0]  current_byte;
 reg [15:0] scratch_word;
-reg [15:0] data_window [0:15];
-reg [7:0]  search_pattern [0:31];
-reg [7:0]  search_window [0:31];
+reg [255:0] data_window;
+reg [255:0] search_pattern;
+reg [255:0] search_window;
 reg [5:0]  search_needle_length;
 integer i;
 
@@ -227,28 +227,73 @@ endfunction
 
 function automatic [15:0] pack_window_word(input [3:0] index);
 	begin
-		pack_window_word = data_window[index];
+		pack_window_word = data_window >> {index, 4'b0000};
 	end
 endfunction
 
 function automatic [7:0] staged_window_byte(input [4:0] index);
+	reg [15:0] window_word;
 	begin
-		staged_window_byte = index[0] ? data_window[index[4:1]][7:0] : data_window[index[4:1]][15:8];
+		window_word = pack_window_word(index[4:1]);
+		staged_window_byte = index[0] ? window_word[7:0] : window_word[15:8];
+	end
+endfunction
+
+function automatic [7:0] search_pattern_byte(input [4:0] index);
+	begin
+		search_pattern_byte = search_pattern >> {index, 3'b000};
+	end
+endfunction
+
+function automatic [7:0] search_window_byte(input [4:0] index);
+	begin
+		search_window_byte = search_window >> {index, 3'b000};
+	end
+endfunction
+
+function automatic [15:0] merge_window_byte(input [15:0] word_value, input byte_sel, input [7:0] byte_value);
+	begin
+		merge_window_byte = byte_sel ? {word_value[15:8], byte_value} : {byte_value, word_value[7:0]};
+	end
+endfunction
+
+function automatic [255:0] set_window_word(input [255:0] window_value, input [3:0] index, input [15:0] word_value);
+	reg [255:0] mask;
+	reg [7:0] shift;
+	begin
+		shift = {index, 4'b0000};
+		mask = ({240'h0, 16'hFFFF} << shift);
+		set_window_word = (window_value & ~mask) | ({240'h0, word_value} << shift);
+	end
+endfunction
+
+function automatic [255:0] set_packed_byte(input [255:0] vector_value, input [4:0] index, input [7:0] byte_value);
+	reg [255:0] mask;
+	reg [7:0] shift;
+	begin
+		shift = {index, 3'b000};
+		mask = ({248'h0, 8'hFF} << shift);
+		set_packed_byte = (vector_value & ~mask) | ({248'h0, byte_value} << shift);
 	end
 endfunction
 
 function automatic search_window_match(input [5:0] needle_length, input [7:0] latest_byte);
 	integer match_index;
 	integer needle_len_i;
+	reg [4:0] match_index_5;
+	reg [4:0] window_index_5;
 	begin
 		needle_len_i = {26'd0, needle_length};
 		search_window_match = (needle_length != 0);
 		for (match_index = 0; match_index < 32; match_index = match_index + 1) begin
 			if (match_index < needle_len_i) begin
+				match_index_5 = match_index[4:0];
 				if (match_index == (needle_len_i - 1)) begin
-					if (latest_byte != search_pattern[match_index]) search_window_match = 1'b0;
-				end else if (search_window[33 - needle_len_i + match_index] != search_pattern[match_index]) begin
-					search_window_match = 1'b0;
+					if (latest_byte != search_pattern_byte(match_index_5)) search_window_match = 1'b0;
+				end else begin
+					window_index_5 = 33 - needle_len_i + match_index;
+					if (search_window_byte(window_index_5) != search_pattern_byte(match_index_5))
+						search_window_match = 1'b0;
 				end
 			end
 		end
@@ -257,33 +302,39 @@ endfunction
 
 	task automatic clear_data_window;
 		begin
-			for (i = 0; i < 16; i = i + 1) data_window[i] <= 16'h0000;
+			data_window <= 256'h0;
 		end
 	endtask
 
 task automatic capture_search_pattern;
+	reg [255:0] next_search_pattern;
 	begin
-		for (i = 0; i < 32; i = i + 1) search_pattern[i] = staged_window_byte(i[4:0]);
+		next_search_pattern = 256'h0;
+		for (i = 0; i < 32; i = i + 1)
+			next_search_pattern = set_packed_byte(next_search_pattern, i[4:0], staged_window_byte(i[4:0]));
+		search_pattern <= next_search_pattern;
 	end
 endtask
 
 	task automatic clear_search_window;
 		begin
-			for (i = 0; i < 32; i = i + 1) search_window[i] <= 8'h00;
+			search_window <= 256'h0;
 		end
 	endtask
 
 task automatic advance_search(input [7:0] byte_value, input [31:0] byte_addr);
 	reg [31:0] match_addr;
 	begin
-		for (i = 0; i < 31; i = i + 1) search_window[i] <= search_window[i + 1];
-		search_window[31] <= byte_value;
+		search_window <= {byte_value, search_window[255:8]};
 
 		if ((op_index + 32'd1) >= {26'd0, search_needle_length} &&
 		    search_window_match(search_needle_length, byte_value)) begin
 			match_addr = byte_addr - {26'd0, search_needle_length} + 32'd1;
-			data_window[0] <= match_addr[15:0];
-			data_window[1] <= match_addr[31:16];
+			data_window <= set_window_word(
+				set_window_word(data_window, 4'd0, match_addr[15:0]),
+				4'd1,
+				match_addr[31:16]
+			);
 			data_valid_reg <= 1'b1;
 			finish_ok();
 		end else if (op_index == (op_length - 1'd1)) begin
@@ -419,13 +470,13 @@ always @(posedge clk_sys) begin
 				`MCD_DBG_REG_WDATA_LO:    wdata_reg[15:0] <= dbg_reg_wdata;
 				`MCD_DBG_REG_WDATA_HI:    wdata_reg[31:16] <= dbg_reg_wdata;
 				`MCD_DBG_REG_EXEC_ID:     exec_id_reg <= dbg_reg_wdata;
-				default: begin
-					if (!busy_reg && state == ST_IDLE &&
-					    dbg_reg_addr >= `MCD_DBG_REG_DATA_BASE && dbg_reg_addr <= `MCD_DBG_REG_DATA_LAST)
-						data_window[dbg_reg_addr[3:0]] <= dbg_reg_wdata;
-				end
-			endcase
-		end
+					default: begin
+						if (!busy_reg && state == ST_IDLE &&
+						    dbg_reg_addr >= `MCD_DBG_REG_DATA_BASE && dbg_reg_addr <= `MCD_DBG_REG_DATA_LAST)
+							data_window <= set_window_word(data_window, dbg_reg_addr[3:0], dbg_reg_wdata);
+					end
+				endcase
+			end
 
 		case (state)
 			ST_IDLE: begin
@@ -474,7 +525,7 @@ always @(posedge clk_sys) begin
 						end
 
 						`MCD_DBG_CMD_GET_ACCESS_MODE: begin
-							data_window[0] <= access_mode_active;
+							data_window <= set_window_word(data_window, 4'd0, access_mode_active);
 							data_valid_reg <= 1'b1;
 							finish_ok();
 						end
@@ -482,7 +533,7 @@ always @(posedge clk_sys) begin
 						`MCD_DBG_CMD_GET_TARGET_CAPS: begin
 							if (!target_valid(target_reg)) set_error(`MCD_DBG_ERR_INVALID_TARGET);
 							else begin
-								data_window[0] <= target_caps(target_reg);
+								data_window <= set_window_word(data_window, 4'd0, target_caps(target_reg));
 								data_valid_reg <= 1'b1;
 								finish_ok();
 							end
@@ -738,13 +789,21 @@ always @(posedge clk_sys) begin
 			end
 
 			ST_SDR_WAIT_DONE: begin
-				if (!sdr_busy) begin
-					if (op_cmd == `MCD_DBG_CMD_READ8 || op_cmd == `MCD_DBG_CMD_READ16 ||
-					    op_cmd == `MCD_DBG_CMD_READ32 || op_cmd == `MCD_DBG_CMD_READ_BLOCK) begin
-						data_window[op_index[4:1]][8 * ~op_index[0] +: 8] <= select_byte(op_target, sdr_dout, current_addr);
-						data_valid_reg <= 1'b1;
-						if (op_index == (op_length - 1)) finish_ok();
-						else begin
+					if (!sdr_busy) begin
+						if (op_cmd == `MCD_DBG_CMD_READ8 || op_cmd == `MCD_DBG_CMD_READ16 ||
+						    op_cmd == `MCD_DBG_CMD_READ32 || op_cmd == `MCD_DBG_CMD_READ_BLOCK) begin
+							data_window <= set_window_word(
+								data_window,
+								op_index[4:1],
+								merge_window_byte(
+									pack_window_word(op_index[4:1]),
+									op_index[0],
+									select_byte(op_target, sdr_dout, current_addr)
+								)
+							);
+							data_valid_reg <= 1'b1;
+							if (op_index == (op_length - 1)) finish_ok();
+							else begin
 							op_index <= op_index + 1'd1;
 							state <= ST_BYTE_DISPATCH;
 						end
@@ -765,14 +824,22 @@ always @(posedge clk_sys) begin
 			end
 
 			ST_BRAM_READ_WAIT: begin
-				if (bram_ack) begin
-					scratch_word <= bram_dout;
-					if (op_cmd == `MCD_DBG_CMD_READ8 || op_cmd == `MCD_DBG_CMD_READ16 ||
-					    op_cmd == `MCD_DBG_CMD_READ32 || op_cmd == `MCD_DBG_CMD_READ_BLOCK) begin
-						data_window[op_index[4:1]][8 * ~op_index[0] +: 8] <= select_byte(op_target, bram_dout, current_addr);
-						data_valid_reg <= 1'b1;
-						if (op_index == (op_length - 1)) finish_ok();
-						else begin
+					if (bram_ack) begin
+						scratch_word <= bram_dout;
+						if (op_cmd == `MCD_DBG_CMD_READ8 || op_cmd == `MCD_DBG_CMD_READ16 ||
+						    op_cmd == `MCD_DBG_CMD_READ32 || op_cmd == `MCD_DBG_CMD_READ_BLOCK) begin
+							data_window <= set_window_word(
+								data_window,
+								op_index[4:1],
+								merge_window_byte(
+									pack_window_word(op_index[4:1]),
+									op_index[0],
+									select_byte(op_target, bram_dout, current_addr)
+								)
+							);
+							data_valid_reg <= 1'b1;
+							if (op_index == (op_length - 1)) finish_ok();
+							else begin
 							op_index <= op_index + 1'd1;
 							state <= ST_BYTE_DISPATCH;
 						end
@@ -807,14 +874,22 @@ always @(posedge clk_sys) begin
 			end
 
 			ST_WORD_READ_WAIT: begin
-				if (word_ack) begin
-					scratch_word <= word_dout;
-					if (op_cmd == `MCD_DBG_CMD_READ8 || op_cmd == `MCD_DBG_CMD_READ16 ||
-					    op_cmd == `MCD_DBG_CMD_READ32 || op_cmd == `MCD_DBG_CMD_READ_BLOCK) begin
-						data_window[op_index[4:1]][8 * ~op_index[0] +: 8] <= select_byte(op_target, word_dout, current_addr);
-						data_valid_reg <= 1'b1;
-						if (op_index == (op_length - 1)) finish_ok();
-						else begin
+					if (word_ack) begin
+						scratch_word <= word_dout;
+						if (op_cmd == `MCD_DBG_CMD_READ8 || op_cmd == `MCD_DBG_CMD_READ16 ||
+						    op_cmd == `MCD_DBG_CMD_READ32 || op_cmd == `MCD_DBG_CMD_READ_BLOCK) begin
+							data_window <= set_window_word(
+								data_window,
+								op_index[4:1],
+								merge_window_byte(
+									pack_window_word(op_index[4:1]),
+									op_index[0],
+									select_byte(op_target, word_dout, current_addr)
+								)
+							);
+							data_valid_reg <= 1'b1;
+							if (op_index == (op_length - 1)) finish_ok();
+							else begin
 							op_index <= op_index + 1'd1;
 							state <= ST_BYTE_DISPATCH;
 						end
