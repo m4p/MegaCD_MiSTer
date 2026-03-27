@@ -2613,7 +2613,9 @@ module busControl( input s_clks Clks, input enT1, input enT4,
 	bus_phase_t busPhase, next;
 
 	always_ff @( posedge Clks.clk) begin
-		if( Clks.extReset)
+		if( SS_APPLY)
+			busPhase <= bus_phase_t'(SS_LOAD[2:0]);
+		else if( Clks.extReset)
 			busPhase <= SRESET;
 		else if( Clks.enPhi1)
 			busPhase <= next;
@@ -2765,7 +2767,6 @@ module busControl( input s_clks Clks, input enT1, input enT4,
 			bciByte <= SS_LOAD[10];
 			isRmcReg <= SS_LOAD[11];
 			wendReg <= SS_LOAD[12];
-			busPhase <= bus_phase_t'(SS_LOAD[2:0]);
 		end
 		else if( Clks.pwrUp) begin
 			bcPend <= 1'b0;
