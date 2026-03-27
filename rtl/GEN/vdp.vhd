@@ -368,6 +368,7 @@ signal DMA_LENGTH	: std_logic_vector(15 downto 0);
 signal DMA_SOURCE	: std_logic_vector(15 downto 0);
 
 signal DMA_VBUS_TIMER : std_logic_vector(1 downto 0);
+signal BR_N_REG     : std_logic;
 signal BGACK_N_REG  : std_logic;
 
 ----------------------------------------------------------------
@@ -965,7 +966,7 @@ begin
 							               REFRESH_EN & REFRESH_FLAG & DT_RD_DTACK_N & DT_RD_SEL &
 							               CODE & PENDING & ADDR(16);
 						when "0010010" =>
-							SS_DOUT_REG <= BGACK_N_REG & BR_N & SCOL & SOVR &
+							SS_DOUT_REG <= BGACK_N_REG & BR_N_REG & SCOL & SOVR &
 							               SLOT_EN & FIFO_EN & REFRESH_EN & REFRESH_FLAG &
 							               FIFO_PARTIAL & FIFO_QUEUE & FIFO_WR_POS & FIFO_RD_POS;
 						when "0010011" =>
@@ -1043,6 +1044,7 @@ STATUS <= "111111" & FIFO_EMPTY & FIFO_FULL & VINT_TG68_PENDING & SOVR & SCOL & 
 -- CPU INTERFACE
 ----------------------------------------------------------------
 
+BR_N <= BR_N_REG;
 BGACK_N <= BGACK_N_REG;
 
 ----------------------------------------------------------------
@@ -3030,7 +3032,7 @@ begin
 		DTC <= DTC_IDLE;
 		DMAC <= DMA_IDLE;
 
-		BR_N <= '1';
+		BR_N_REG <= '1';
 		BGACK_N_REG <= '1';
 
 	elsif rising_edge(CLK) then
@@ -3058,7 +3060,7 @@ begin
 					FIFO_QUEUE <= SS_DIN(6 downto 4);
 					FIFO_PARTIAL <= SS_DIN(7);
 					REFRESH_FLAG <= SS_DIN(8);
-					BR_N <= SS_DIN(14);
+					BR_N_REG <= SS_DIN(14);
 					BGACK_N_REG <= SS_DIN(15);
 				when others => null;
 			end case;
@@ -3112,7 +3114,7 @@ begin
 							if DI(7) = '1' then
 								if REG(23)(7) = '0' then
 									DMA_VBUS <= '1';
-									BR_N <= '0';
+									BR_N_REG <= '0';
 								else
 									if REG(23)(6) = '0' then
 										DMA_FILL <= '1';
@@ -3654,7 +3656,7 @@ begin
 			when DMA_VBUS_WAIT =>
 				if BG_N = '0' then
 					BGACK_N_REG <= '0';
-					BR_N <= '1';
+					BR_N_REG <= '1';
 				end if;
 				if SLOT_EN = '1' then
 					if DMA_VBUS_TIMER = 0 then
