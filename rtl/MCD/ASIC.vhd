@@ -309,6 +309,7 @@ architecture rtl of ASIC is
 	signal SS_DOUT_REG : std_logic_vector(31 downto 0) := (others => '0');
 	signal SS_COMMIT_PENDING : std_logic := '0';
 	signal SS_APPLY : std_logic;
+	signal ERES_N_REG : std_logic := '0';
 
 begin
 
@@ -316,6 +317,7 @@ begin
 	SS_APPLY <= SS_COMMIT_PENDING;
 	SS_ACK <= SS_REQ_D;
 	SS_DOUT <= SS_DOUT_REG;
+	ERES_N <= ERES_N_REG;
 
 	process(RST_N, CLK)
 		variable SS_IDX   : integer range 0 to 63;
@@ -354,7 +356,7 @@ begin
 						SS_DOUT_REG(18) <= OLD_CDC_INT_N;
 						SS_DOUT_REG(19) <= MAIN_CPU_CDC_READ;
 						SS_DOUT_REG(20) <= SUB_CPU_CDC_READ;
-						SS_DOUT_REG(21) <= ERES_N;
+						SS_DOUT_REG(21) <= ERES_N_REG;
 						SS_DOUT_REG(22) <= MCD_RST_DONE;
 						SS_DOUT_REG(25 downto 23) <= std_logic_vector(RST_CNT);
 					when 1 =>
@@ -481,23 +483,23 @@ begin
 	process( RST_N, CLK )
 	begin
 		if RST_N = '0' then
-			ERES_N <= '0';
+			ERES_N_REG <= '0';
 			MCD_RST_DONE <= '1';
 			RST_CNT <= (others => '1');
 		elsif rising_edge(CLK) then
 			if SS_APPLY = '1' then
-				ERES_N <= SS_SHADOW(0)(21);
+				ERES_N_REG <= SS_SHADOW(0)(21);
 				MCD_RST_DONE <= SS_SHADOW(0)(22);
 				RST_CNT <= unsigned(SS_SHADOW(0)(25 downto 23));
 			elsif EN = '1' then
 				MCD_RST_DONE <= '0';
 				RST_CNT <= RST_CNT - 1;
 				if MAIN_RST_EXEC = '1' or SUB_RST_EXEC = '1' then
-					ERES_N <= '0';
+					ERES_N_REG <= '0';
 					MCD_RST_DONE <= '1';
 					RST_CNT <= "111";
 				elsif RST_CNT = 0 then
-					ERES_N <= '1';
+					ERES_N_REG <= '1';
 				end if;
 			end if;
 		end if;
