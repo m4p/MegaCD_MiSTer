@@ -255,11 +255,11 @@ function automatic search_window_match(input [5:0] needle_length, input [7:0] la
 	end
 endfunction
 
-task automatic clear_data_window;
-	begin
-		for (i = 0; i < 16; i = i + 1) data_window[i] = 16'h0000;
-	end
-endtask
+	task automatic clear_data_window;
+		begin
+			for (i = 0; i < 16; i = i + 1) data_window[i] <= 16'h0000;
+		end
+	endtask
 
 task automatic capture_search_pattern;
 	begin
@@ -267,11 +267,11 @@ task automatic capture_search_pattern;
 	end
 endtask
 
-task automatic clear_search_window;
-	begin
-		for (i = 0; i < 32; i = i + 1) search_window[i] = 8'h00;
-	end
-endtask
+	task automatic clear_search_window;
+		begin
+			for (i = 0; i < 32; i = i + 1) search_window[i] <= 8'h00;
+		end
+	endtask
 
 task automatic advance_search(input [7:0] byte_value, input [31:0] byte_addr);
 	reg [31:0] match_addr;
