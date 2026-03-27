@@ -159,7 +159,6 @@ architecture rtl of MCD is
 	signal PRG_OE_N_I     : std_logic;
 	signal PRG_RFS_I      : std_logic;
 	signal PCM_A_I        : std_logic_vector(12 downto 0);
-	signal PCM_DO_I       : std_logic_vector(7 downto 0);
 	signal PCM_WE_N_I     : std_logic;
 	signal PCM_N_I        : std_logic;
 
@@ -353,7 +352,6 @@ begin
 	PRG_RFS <= '0' when DEBUG_PAUSE = '1' else PRG_RFS_I;
 
 	PCM_A <= PCM_A_I;
-	PCM_DO <= PCM_DO_I;
 	PCM_WE_N <= '1' when DEBUG_PAUSE = '1' else PCM_WE_N_I;
 	PCM_N <= '1' when DEBUG_PAUSE = '1' else PCM_N_I;
 
