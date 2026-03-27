@@ -356,6 +356,35 @@ HTML_PAGE = """<!doctype html>
       </article>
 
       <article class="card">
+        <h2>Byte Search</h2>
+        <p class="small">
+          Scan a target range for the first matching byte sequence. Enter bytes in hex, for example
+          <span class="mono">4E 75</span> or <span class="mono">0x4E,0x75</span>.
+        </p>
+        <div class="form-grid" style="margin-top:14px">
+          <label>
+            Target
+            <select id="searchTarget"></select>
+          </label>
+          <label>
+            Start Address
+            <input id="searchAddr" type="text" value="0" spellcheck="false">
+          </label>
+          <label>
+            Search Length
+            <input id="searchLength" type="text" value="65536" spellcheck="false">
+          </label>
+          <label style="grid-column: 1 / -1;">
+            Bytes (hex)
+            <input id="searchBytes" type="text" value="4E 75" spellcheck="false">
+          </label>
+        </div>
+        <div class="button-row">
+          <button class="secondary" id="searchBtn">Search Bytes</button>
+        </div>
+      </article>
+
+      <article class="card">
         <h2>Targets</h2>
         <div style="overflow:auto">
           <table>
@@ -404,6 +433,7 @@ HTML_PAGE = """<!doctype html>
       statusStrip: document.getElementById("statusStrip"),
       output: document.getElementById("output"),
       target: document.getElementById("target"),
+      searchTarget: document.getElementById("searchTarget"),
       command: document.getElementById("command"),
       valueField: document.getElementById("valueField"),
       lengthField: document.getElementById("lengthField"),
@@ -435,6 +465,24 @@ HTML_PAGE = """<!doctype html>
       return Number.parseInt(trimmed, 10);
     }
 
+    function parseByteSequence(value) {
+      const tokens = value.trim().split(/[\\s,]+/).filter(Boolean);
+      if (!tokens.length) {
+        throw new Error("Enter at least one search byte.");
+      }
+      const bytes = tokens.map((token, index) => {
+        const normalized = token.replace(/^0x/i, "");
+        if (!/^[0-9a-fA-F]{1,2}$/.test(normalized)) {
+          throw new Error(`Invalid byte ${index + 1}: ${token}`);
+        }
+        return Number.parseInt(normalized, 16);
+      });
+      if (bytes.length > 32) {
+        throw new Error("Byte search is limited to 32 bytes.");
+      }
+      return bytes;
+    }
+
     function renderStatus(data) {
       const pills = [];
       pills.push(`<span class="pill ${data.ok ? "good" : "bad"}">HTTP ${data.ok ? "ready" : "degraded"}</span>`);
@@ -449,9 +497,11 @@ HTML_PAGE = """<!doctype html>
       state.targets = targets;
       state.caps = Object.fromEntries(targets.map((target) => [target.name, target]));
 
-      els.target.innerHTML = targets
+      const options = targets
         .map((target) => `<option value="${target.name}">${target.name}</option>`)
         .join("");
+      els.target.innerHTML = options;
+      els.searchTarget.innerHTML = options;
 
       els.targetsBody.innerHTML = targets
         .map((target) => `
@@ -523,6 +573,20 @@ HTML_PAGE = """<!doctype html>
         payload.value = parseMaybeNumber(document.getElementById("value").value);
       }
       sendCommand(payload);
+    });
+
+    document.getElementById("searchBtn").addEventListener("click", () => {
+      try {
+        sendCommand({
+          cmd: "search_bytes",
+          target: els.searchTarget.value,
+          addr: parseMaybeNumber(document.getElementById("searchAddr").value),
+          length: parseMaybeNumber(document.getElementById("searchLength").value),
+          data: parseByteSequence(document.getElementById("searchBytes").value)
+        });
+      } catch (error) {
+        setOutput({ ok: false, error: String(error) });
+      }
     });
 
     document.getElementById("rawSendBtn").addEventListener("click", () => {

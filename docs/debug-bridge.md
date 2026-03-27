@@ -65,8 +65,32 @@ Implemented commands:
 - `WRITE16`
 - `WRITE32`
 - `READ_BLOCK`
+- `SEARCH_BYTES`
 
 `READ_BLOCK` is limited to 32 bytes in v1 because the mailbox data window is 16 x 16-bit words.
+`SEARCH_BYTES` reuses that same 32-byte window to stage the search needle.
+
+### `SEARCH_BYTES` contract
+
+Inputs:
+
+- `TARGET`: debug target to scan
+- `ADDR`: inclusive start address within the target
+- `LENGTH`: number of bytes to scan from `ADDR`
+- `WDATA_LO[7:0]`: needle length in bytes
+- `DATA[0..15]`: staged search bytes before `EXEC_ID`
+
+Results:
+
+- success with `STATUS.data_valid = 1` means a match was found
+- `DATA[0]` and `DATA[1]` return the 32-bit match address
+- success with `STATUS.data_valid = 0` means the range was scanned and no match was found
+
+Limits:
+
+- search needles are `1..32` bytes
+- search length must be at least the needle length
+- search follows the same live/paused read capability rules as `READ_BLOCK`
 
 ## Targets
 
@@ -134,13 +158,13 @@ The mailbox registers live behind `DBG_REG_GET` and `DBG_REG_SET`.
 | `TARGET` | `6` | target ID |
 | `ADDR_LO` | `7` | address low 16 bits |
 | `ADDR_HI` | `8` | address high 16 bits |
-| `LENGTH_LO` | `9` | block length low 16 bits |
-| `LENGTH_HI` | `10` | block length high 16 bits |
-| `WDATA_LO` | `11` | write data low 16 bits |
+| `LENGTH_LO` | `9` | block/search length low 16 bits |
+| `LENGTH_HI` | `10` | block/search length high 16 bits |
+| `WDATA_LO` | `11` | write data low 16 bits, or search needle length in bits `[7:0]` |
 | `WDATA_HI` | `12` | write data high 16 bits |
 | `EXEC_ID` | `13` | write a new ID to execute |
 | `DONE_ID` | `14` | completed ID |
-| `DATA[0..15]` | `16..31` | read result window |
+| `DATA[0..15]` | `16..31` | read result window, or staged search bytes while idle |
 
 ## Linux-side Daemon
 
@@ -171,6 +195,12 @@ Test a single request from the shell without opening a TCP port:
 
 ```sh
 ./mcd_debugd --command '{"cmd":"get_target_caps"}'
+```
+
+Search for a byte sequence:
+
+```sh
+./mcd_debugd --command '{"cmd":"search_bytes","target":"prgram","addr":0,"length":65536,"data":[78,117]}'
 ```
 
 `mcd_debugd` must run on the MiSTer itself and needs `/dev/mem` access.
@@ -273,6 +303,14 @@ curl -X POST http://127.0.0.1:8080/api/command \
   -d '{"cmd":"set_access_mode","mode":"live"}'
 ```
 
+Search for a byte sequence:
+
+```sh
+curl -X POST http://127.0.0.1:8080/api/command \
+  -H 'Content-Type: application/json' \
+  -d '{"cmd":"search_bytes","target":"prgram","addr":0,"length":65536,"data":[78,117]}'
+```
+
 ## Local MCP Server
 
 Source:
@@ -332,6 +370,7 @@ Example client-style command configuration:
 | `get_target_caps` | Get all target caps or one target |
 | `read_memory` | Read 8/16/32/block data |
 | `write_memory` | Write 8/16/32 data |
+| `search_bytes` | Search a target range for the first matching byte sequence |
 | `raw_command` | Pass a raw command object through to `/api/command` |
 
 ### MCP tool argument notes
@@ -344,6 +383,11 @@ Example client-style command configuration:
 - `write_memory`
   - `width`: `8`, `16`, or `32`
   - `value`: non-negative integer
+- `search_bytes`
+  - `target`: one of `md68k_ram`, `subcpu_ram`, `wordram`, `prgram`, `backup_ram`
+  - `addr`: non-negative integer
+  - `length`: positive integer byte span to scan
+  - `data`: integer array of `1..32` bytes, each `0..255`
 - `raw_command`
   - `command`: raw JSON object matching the web bridge request format
 
@@ -396,6 +440,7 @@ Use this for targets that report `supports_live_read: true`.
 printf '%s\n' '{"cmd":"set_access_mode","mode":"live"}' | nc 127.0.0.1 24512
 printf '%s\n' '{"cmd":"read16","target":"md68k_ram","addr":65520}' | nc 127.0.0.1 24512
 printf '%s\n' '{"cmd":"read_block","target":"backup_ram","addr":0,"length":16}' | nc 127.0.0.1 24512
+printf '%s\n' '{"cmd":"search_bytes","target":"prgram","addr":0,"length":65536,"data":[78,117]}' | nc 127.0.0.1 24512
 ```
 
 Operational rules:

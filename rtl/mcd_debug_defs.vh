@@ -26,7 +26,7 @@
 `define MCD_DBG_REG_DATA_LAST    6'd31
 
 // Protocol version.
-`define MCD_DBG_VERSION 16'h0001
+`define MCD_DBG_VERSION 16'h0002
 
 // Debug commands.
 `define MCD_DBG_CMD_NONE            8'h00
@@ -42,6 +42,7 @@
 `define MCD_DBG_CMD_WRITE16         8'h21
 `define MCD_DBG_CMD_WRITE32         8'h22
 `define MCD_DBG_CMD_READ_BLOCK      8'h30
+`define MCD_DBG_CMD_SEARCH_BYTES    8'h31
 
 // Access modes.
 `define MCD_DBG_ACCESS_PAUSED 16'h0000

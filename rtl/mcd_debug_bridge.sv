@@ -93,6 +93,9 @@ reg [31:0] op_index;
 reg [7:0]  current_byte;
 reg [15:0] scratch_word;
 reg [15:0] data_window [0:15];
+reg [7:0]  search_pattern [0:31];
+reg [7:0]  search_window [0:31];
+reg [5:0]  search_needle_length;
 integer i;
 
 wire paused = pause_hold_reg && gen_pause_ack && mcd_pause_ack;
@@ -228,9 +231,67 @@ function automatic [15:0] pack_window_word(input [3:0] index);
 	end
 endfunction
 
+function automatic [7:0] staged_window_byte(input [4:0] index);
+	begin
+		staged_window_byte = index[0] ? data_window[index[4:1]][7:0] : data_window[index[4:1]][15:8];
+	end
+endfunction
+
+function automatic search_window_match(input [5:0] needle_length, input [7:0] latest_byte);
+	integer match_index;
+	integer needle_len_i;
+	begin
+		needle_len_i = {26'd0, needle_length};
+		search_window_match = (needle_length != 0);
+		for (match_index = 0; match_index < 32; match_index = match_index + 1) begin
+			if (match_index < needle_len_i) begin
+				if (match_index == (needle_len_i - 1)) begin
+					if (latest_byte != search_pattern[match_index]) search_window_match = 1'b0;
+				end else if (search_window[33 - needle_len_i + match_index] != search_pattern[match_index]) begin
+					search_window_match = 1'b0;
+				end
+			end
+		end
+	end
+endfunction
+
 task automatic clear_data_window;
 	begin
 		for (i = 0; i < 16; i = i + 1) data_window[i] = 16'h0000;
+	end
+endtask
+
+task automatic capture_search_pattern;
+	begin
+		for (i = 0; i < 32; i = i + 1) search_pattern[i] = staged_window_byte(i[4:0]);
+	end
+endtask
+
+task automatic clear_search_window;
+	begin
+		for (i = 0; i < 32; i = i + 1) search_window[i] = 8'h00;
+	end
+endtask
+
+task automatic advance_search(input [7:0] byte_value, input [31:0] byte_addr);
+	reg [31:0] match_addr;
+	begin
+		for (i = 0; i < 31; i = i + 1) search_window[i] <= search_window[i + 1];
+		search_window[31] <= byte_value;
+
+		if ((op_index + 32'd1) >= {26'd0, search_needle_length} &&
+		    search_window_match(search_needle_length, byte_value)) begin
+			match_addr = byte_addr - {26'd0, search_needle_length} + 32'd1;
+			data_window[0] <= match_addr[15:0];
+			data_window[1] <= match_addr[31:16];
+			data_valid_reg <= 1'b1;
+			finish_ok();
+		end else if (op_index == (op_length - 1'd1)) begin
+			finish_ok();
+		end else begin
+			op_index <= op_index + 1'd1;
+			state <= ST_BYTE_DISPATCH;
+		end
 	end
 endtask
 
@@ -258,9 +319,10 @@ always @(*) begin
 	integer data_index;
 
 	dbg_reg_rdata = 16'h0000;
+	data_index = 0;
 	case (dbg_reg_addr)
 		`MCD_DBG_REG_VERSION:     dbg_reg_rdata = `MCD_DBG_VERSION;
-		`MCD_DBG_REG_STATUS:      dbg_reg_rdata = {8'h00,
+		`MCD_DBG_REG_STATUS:      dbg_reg_rdata = {7'h00,
 		                                           1'b0,
 		                                           data_valid_reg,
 		                                           warning_flag_reg,
@@ -285,7 +347,7 @@ always @(*) begin
 		`MCD_DBG_REG_DONE_ID:     dbg_reg_rdata = done_id_reg;
 		default: begin
 			if (dbg_reg_addr >= `MCD_DBG_REG_DATA_BASE && dbg_reg_addr <= `MCD_DBG_REG_DATA_LAST) begin
-				data_index = dbg_reg_addr - `MCD_DBG_REG_DATA_BASE;
+				data_index = {28'd0, dbg_reg_addr[3:0]};
 				dbg_reg_rdata = pack_window_word(data_index[3:0]);
 			end
 		end
@@ -330,6 +392,7 @@ always @(posedge clk_sys) begin
 		op_length        <= 32'h0000_0000;
 		op_wdata         <= 32'h0000_0000;
 		op_index         <= 32'h0000_0000;
+		search_needle_length <= 6'd0;
 		current_byte     <= 8'h00;
 		scratch_word     <= 16'h0000;
 		sdr_addr         <= 24'h0;
@@ -342,6 +405,7 @@ always @(posedge clk_sys) begin
 		word_we          <= 1'b0;
 		word_bank        <= 1'b0;
 		clear_data_window();
+		clear_search_window();
 	end else begin
 		if (dbg_reg_wr) begin
 			case (dbg_reg_addr)
@@ -355,7 +419,11 @@ always @(posedge clk_sys) begin
 				`MCD_DBG_REG_WDATA_LO:    wdata_reg[15:0] <= dbg_reg_wdata;
 				`MCD_DBG_REG_WDATA_HI:    wdata_reg[31:16] <= dbg_reg_wdata;
 				`MCD_DBG_REG_EXEC_ID:     exec_id_reg <= dbg_reg_wdata;
-				default: ;
+				default: begin
+					if (!busy_reg && state == ST_IDLE &&
+					    dbg_reg_addr >= `MCD_DBG_REG_DATA_BASE && dbg_reg_addr <= `MCD_DBG_REG_DATA_LAST)
+						data_window[dbg_reg_addr[3:0]] <= dbg_reg_wdata;
+				end
 			endcase
 		end
 
@@ -372,6 +440,7 @@ always @(posedge clk_sys) begin
 					op_length        <= length_reg;
 					op_wdata         <= wdata_reg;
 					op_index         <= 32'h0000_0000;
+					search_needle_length <= (command_reg == `MCD_DBG_CMD_SEARCH_BYTES) ? wdata_reg[5:0] : 6'd0;
 					busy_reg         <= 1'b1;
 					done_reg         <= 1'b0;
 					error_flag_reg   <= 1'b0;
@@ -379,6 +448,8 @@ always @(posedge clk_sys) begin
 					warning_flag_reg <= 1'b0;
 					warning_reg      <= `MCD_DBG_WARN_NONE;
 					data_valid_reg   <= 1'b0;
+					if (command_reg == `MCD_DBG_CMD_SEARCH_BYTES) capture_search_pattern();
+					clear_search_window();
 					clear_data_window();
 
 					case (command_reg)
@@ -579,6 +650,36 @@ always @(posedge clk_sys) begin
 							end
 						end
 
+						`MCD_DBG_CMD_SEARCH_BYTES: begin
+							if (!target_valid(target_reg)) set_error(`MCD_DBG_ERR_INVALID_TARGET);
+							else if ((wdata_reg[7:0] == 8'd0) || (wdata_reg[7:0] > 8'd32))
+								set_error(`MCD_DBG_ERR_LENGTH);
+							else if ((length_reg == 32'd0) || (length_reg < {24'h000000, wdata_reg[7:0]}))
+								set_error(`MCD_DBG_ERR_LENGTH);
+							else if ((access_mode_active == `MCD_DBG_ACCESS_LIVE) &&
+							         ((target_caps(target_reg) & `MCD_DBG_CAP_LIVE_READ) == 16'h0000))
+								set_error(`MCD_DBG_ERR_LIVE_UNSUPPORTED);
+							else if ((access_mode_active != `MCD_DBG_ACCESS_LIVE) &&
+							         ((target_caps(target_reg) & `MCD_DBG_CAP_PAUSED_READ) == 16'h0000))
+								set_error(`MCD_DBG_ERR_PAUSED_UNSUPPORTED);
+							else if ((access_mode_active != `MCD_DBG_ACCESS_LIVE) && !paused)
+								set_error(`MCD_DBG_ERR_NOT_PAUSED);
+							else if ((addr_reg + length_reg - 1) >= target_limit(target_reg))
+								set_error(`MCD_DBG_ERR_INVALID_ADDR);
+							else begin
+								op_length <= length_reg;
+								if ((target_caps(target_reg) & `MCD_DBG_CAP_ARBITRATED) != 16'h0000) begin
+									warning_reg <= `MCD_DBG_WARN_ARBITRATED_VALUE;
+									warning_flag_reg <= 1'b1;
+								end
+								if ((target_caps(target_reg) & `MCD_DBG_CAP_RAW_PHYSICAL) != 16'h0000) begin
+									warning_reg <= `MCD_DBG_WARN_RAW_PHYSICAL_MAPPING;
+									warning_flag_reg <= 1'b1;
+								end
+								state <= ST_BYTE_DISPATCH;
+							end
+						end
+
 						default:
 							set_error(`MCD_DBG_ERR_INVALID_CMD);
 					endcase
@@ -647,6 +748,8 @@ always @(posedge clk_sys) begin
 							op_index <= op_index + 1'd1;
 							state <= ST_BYTE_DISPATCH;
 						end
+					end else if (op_cmd == `MCD_DBG_CMD_SEARCH_BYTES) begin
+						advance_search(select_byte(op_target, sdr_dout, current_addr), current_addr);
 					end else begin
 						if (op_index == (op_length - 1)) finish_ok();
 						else begin
@@ -673,6 +776,8 @@ always @(posedge clk_sys) begin
 							op_index <= op_index + 1'd1;
 							state <= ST_BYTE_DISPATCH;
 						end
+					end else if (op_cmd == `MCD_DBG_CMD_SEARCH_BYTES) begin
+						advance_search(select_byte(op_target, bram_dout, current_addr), current_addr);
 					end else begin
 						bram_din <= merge_byte(op_target, bram_dout, current_addr, current_byte);
 						bram_we <= 1'b1;
@@ -713,6 +818,8 @@ always @(posedge clk_sys) begin
 							op_index <= op_index + 1'd1;
 							state <= ST_BYTE_DISPATCH;
 						end
+					end else if (op_cmd == `MCD_DBG_CMD_SEARCH_BYTES) begin
+						advance_search(select_byte(op_target, word_dout, current_addr), current_addr);
 					end else begin
 						word_din <= merge_byte(op_target, word_dout, current_addr, current_byte);
 						word_we <= 1'b1;

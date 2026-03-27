@@ -69,6 +69,7 @@ constexpr uint8_t kCmdWrite8 = 0x20;
 constexpr uint8_t kCmdWrite16 = 0x21;
 constexpr uint8_t kCmdWrite32 = 0x22;
 constexpr uint8_t kCmdReadBlock = 0x30;
+constexpr uint8_t kCmdSearchBytes = 0x31;
 
 constexpr uint16_t kAccessModePaused = 0x0000;
 constexpr uint16_t kAccessModeLive = 0x0001;
@@ -111,7 +112,7 @@ constexpr uint16_t kErrTransportBusy = 0x0009;
 constexpr uint16_t kErrTargetBusy = 0x000A;
 constexpr uint16_t kErrInvalidMode = 0x000B;
 
-using JsonScalar = std::variant<std::string, int64_t, bool>;
+using JsonScalar = std::variant<std::string, int64_t, bool, std::vector<int64_t>>;
 
 struct FlatJsonObject {
   std::unordered_map<std::string, JsonScalar> values;
@@ -137,6 +138,12 @@ struct FlatJsonObject {
     const JsonScalar* value = Find(key);
     if (!value || !std::holds_alternative<bool>(*value)) return std::nullopt;
     return std::get<bool>(*value);
+  }
+
+  std::optional<std::vector<int64_t>> GetIntArray(const std::string& key) const {
+    const JsonScalar* value = Find(key);
+    if (!value || !std::holds_alternative<std::vector<int64_t>>(*value)) return std::nullopt;
+    return std::get<std::vector<int64_t>>(*value);
   }
 };
 
@@ -243,6 +250,54 @@ bool ParseJsonString(const std::string& text, size_t& pos, std::string& out, std
   return false;
 }
 
+bool ParseJsonArray(const std::string& text, size_t& pos, std::vector<int64_t>& out, std::string& error) {
+  if (pos >= text.size() || text[pos] != '[') {
+    error = "expected array";
+    return false;
+  }
+  ++pos;
+  out.clear();
+
+  while (true) {
+    SkipWs(text, pos);
+    if (pos >= text.size()) {
+      error = "unterminated array";
+      return false;
+    }
+    if (text[pos] == ']') {
+      ++pos;
+      return true;
+    }
+
+    size_t start = pos;
+    while (pos < text.size() && text[pos] != ',' && text[pos] != ']') ++pos;
+    std::string token = Trim(text.substr(start, pos - start));
+    int64_t parsed = 0;
+    if (!ParseInteger(token, parsed)) {
+      error = "arrays may only contain integers";
+      return false;
+    }
+    out.push_back(parsed);
+
+    SkipWs(text, pos);
+    if (pos >= text.size()) {
+      error = "unterminated array";
+      return false;
+    }
+    if (text[pos] == ',') {
+      ++pos;
+      continue;
+    }
+    if (text[pos] == ']') {
+      ++pos;
+      return true;
+    }
+
+    error = "expected ',' or ']'";
+    return false;
+  }
+}
+
 bool ParseJsonValue(const std::string& text, size_t& pos, JsonScalar& out, std::string& error) {
   SkipWs(text, pos);
   if (pos >= text.size()) {
@@ -253,6 +308,13 @@ bool ParseJsonValue(const std::string& text, size_t& pos, JsonScalar& out, std::
   if (text[pos] == '"') {
     std::string parsed;
     if (!ParseJsonString(text, pos, parsed, error)) return false;
+    out = parsed;
+    return true;
+  }
+
+  if (text[pos] == '[') {
+    std::vector<int64_t> parsed;
+    if (!ParseJsonArray(text, pos, parsed, error)) return false;
     out = parsed;
     return true;
   }
@@ -525,7 +587,8 @@ class DebugMailbox {
                            uint32_t length,
                            uint32_t value,
                            std::optional<uint16_t> staged_mode,
-                           int timeout_ms) {
+                           int timeout_ms,
+                           const std::vector<uint8_t>* window_data = nullptr) {
     std::lock_guard<std::mutex> lock(mutex_);
     MailboxResult result;
 
@@ -547,6 +610,21 @@ class DebugMailbox {
     if (!WriteRegLocked(kRegLengthHi, static_cast<uint16_t>(length >> 16), result.transport_error)) return result;
     if (!WriteRegLocked(kRegWdataLo, static_cast<uint16_t>(value), result.transport_error)) return result;
     if (!WriteRegLocked(kRegWdataHi, static_cast<uint16_t>(value >> 16), result.transport_error)) return result;
+    if (window_data) {
+      for (size_t index = 0; index < result.data.size(); ++index) {
+        uint16_t word = 0;
+        size_t byte_index = index << 1;
+        if (byte_index < window_data->size()) {
+          word |= static_cast<uint16_t>((*window_data)[byte_index]) << 8;
+        }
+        if ((byte_index + 1) < window_data->size()) {
+          word |= static_cast<uint16_t>((*window_data)[byte_index + 1]);
+        }
+        if (!WriteRegLocked(static_cast<uint8_t>(kRegDataBase + index), word, result.transport_error)) {
+          return result;
+        }
+      }
+    }
 
     uint16_t exec_id = next_exec_id_++;
     if (!next_exec_id_) ++next_exec_id_;
@@ -774,6 +852,65 @@ std::string HandleRequest(DebugMailbox& mailbox, const std::string& line, int ti
     }
     caps_json << "}";
     return SuccessJson(caps_json.str());
+  }
+
+  if (*command == "search_bytes") {
+    auto target_name = request.GetString("target");
+    auto address = request.GetInt("addr");
+    auto search_length = request.GetInt("length");
+    auto maybe_data = request.GetIntArray("data");
+    if (!target_name.has_value() || !address.has_value() || !search_length.has_value() || !maybe_data.has_value()) {
+      return JsonErrorResponse("missing target, addr, length, or data", "invalid_request");
+    }
+    if (*address < 0) {
+      return JsonErrorResponse("addr must be non-negative", "invalid_request");
+    }
+    if (*search_length <= 0) {
+      return JsonErrorResponse("length must be positive", "invalid_request");
+    }
+
+    auto target = FindTargetByName(*target_name);
+    if (!target.has_value()) {
+      return JsonErrorResponse("unknown target", "invalid_target");
+    }
+
+    std::vector<uint8_t> bytes;
+    bytes.reserve(maybe_data->size());
+    for (int64_t value : *maybe_data) {
+      if (value < 0 || value > 255) {
+        return JsonErrorResponse("data bytes must be in range 0..255", "invalid_request");
+      }
+      bytes.push_back(static_cast<uint8_t>(value));
+    }
+    if (bytes.empty() || bytes.size() > 32) {
+      return JsonErrorResponse("data must contain between 1 and 32 bytes", "invalid_request");
+    }
+
+    MailboxResult result = mailbox.RunCommand(
+        kCmdSearchBytes,
+        target->id,
+        static_cast<uint32_t>(*address),
+        static_cast<uint32_t>(*search_length),
+        static_cast<uint32_t>(bytes.size()),
+        std::nullopt,
+        timeout_ms,
+        &bytes);
+    if (!result.ok) return MailboxFailureJson(result);
+
+    std::ostringstream body;
+    body << "\"target\":\"" << JsonEscape(target->name) << "\""
+         << ",\"addr\":" << static_cast<uint32_t>(*address)
+         << ",\"length\":" << static_cast<uint32_t>(*search_length)
+         << ",\"pattern_length\":" << bytes.size()
+         << ",\"data\":" << BytesJson(bytes)
+         << ",\"found\":" << BoolJson(result.status & kStatusDataValid)
+         << "," << BaseResultJson(result);
+    if (result.status & kStatusDataValid) {
+      uint32_t match_addr = static_cast<uint32_t>(result.data[0]) |
+                            (static_cast<uint32_t>(result.data[1]) << 16);
+      body << ",\"match_addr\":" << match_addr;
+    }
+    return SuccessJson(body.str());
   }
 
   uint8_t mailbox_command = 0;

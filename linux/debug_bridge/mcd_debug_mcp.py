@@ -166,6 +166,26 @@ TOOLS = [
         },
     ),
     make_tool(
+        "search_bytes",
+        "Search a target range for the first occurrence of a byte pattern.",
+        {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "enum": TARGET_NAMES},
+                "addr": {"type": "integer", "minimum": 0},
+                "length": {"type": "integer", "minimum": 1},
+                "data": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "minItems": 1,
+                    "maxItems": 32,
+                },
+            },
+            "required": ["target", "addr", "length", "data"],
+            "additionalProperties": False,
+        },
+    ),
+    make_tool(
         "raw_command",
         "Send a raw command object directly to /api/command on the configured MiSTer web bridge.",
         {
@@ -264,6 +284,35 @@ def require_integer(arguments: dict[str, Any], key: str, minimum: int | None = N
     return value
 
 
+def require_integer_array(
+    arguments: dict[str, Any],
+    key: str,
+    *,
+    minimum_length: int | None = None,
+    maximum_length: int | None = None,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> list[int]:
+    value = arguments.get(key)
+    if not isinstance(value, list):
+        raise ValueError(f"{key} must be an array")
+    if minimum_length is not None and len(value) < minimum_length:
+        raise ValueError(f"{key} must contain at least {minimum_length} items")
+    if maximum_length is not None and len(value) > maximum_length:
+        raise ValueError(f"{key} must contain at most {maximum_length} items")
+
+    items: list[int] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, int):
+            raise ValueError(f"{key}[{index}] must be an integer")
+        if minimum is not None and item < minimum:
+            raise ValueError(f"{key}[{index}] must be >= {minimum}")
+        if maximum is not None and item > maximum:
+            raise ValueError(f"{key}[{index}] must be <= {maximum}")
+        items.append(item)
+    return items
+
+
 def tool_response(payload: Any, is_error: bool = False) -> dict[str, Any]:
     text = json.dumps(payload, indent=2, sort_keys=False)
     response = {
@@ -322,6 +371,14 @@ def handle_tool_call(client: HttpBridgeClient, name: str, arguments: dict[str, A
         width = require_string(arguments, "width", WRITE_WIDTHS)
         value = require_integer(arguments, "value", minimum=0)
         payload = {"cmd": f"write{width}", "target": target, "addr": addr, "value": value}
+        return backend_tool_response(client.command(payload))
+
+    if name == "search_bytes":
+        target = require_string(arguments, "target", TARGET_NAMES)
+        addr = require_integer(arguments, "addr", minimum=0)
+        length = require_integer(arguments, "length", minimum=1)
+        data = require_integer_array(arguments, "data", minimum_length=1, maximum_length=32, minimum=0, maximum=255)
+        payload = {"cmd": "search_bytes", "target": target, "addr": addr, "length": length, "data": data}
         return backend_tool_response(client.command(payload))
 
     if name == "raw_command":
