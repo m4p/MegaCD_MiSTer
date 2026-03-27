@@ -1517,7 +1517,7 @@ reg tmpram_tx_start;
 reg tmpram_tx_finish;
 reg tmpram_req;
 reg tmpram_busy_d;
-assign dbg_bram_grant = ~(sd_rd[0] | sd_wr[0] | sd_buff_wr | tmpram_tx_start);
+assign dbg_bram_grant = ~(sd_rd | sd_wr | sd_buff_wr | tmpram_tx_start);
 assign dbg_sdr_grant = ~ss_sdr_req & ~rom_download & ~tmpram_req & ~tmpram_tx_start;
 always @(posedge clk_sys) begin
 	reg state;
