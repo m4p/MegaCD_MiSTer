@@ -2276,9 +2276,7 @@ begin
 				IMAGE_LINE <= (others => '0');
 				IMAGE_CELL <= (others => '0');
 				HDOTS <= (others => '0');
-				GFX_WORDRAM_DO <= (others => '0');
 				GFX_DO <= (others => '0');
-				WR_GFX_RUN <= '0';
 				GFX_ADDR <= (others => '0');
 				GFX_SEL <= '0';
 				GFX_RMW <= '0';
