@@ -23,6 +23,7 @@ module jt12_mmr(
     input           rst,
     input           clk,
     input           cen /* synthesis direct_enable */,
+    input           ss_apply,
     output          clk_en,
     output          clk_en_2,
     output          clk_en_ssg,
@@ -123,7 +124,11 @@ module jt12_mmr(
     output  [3:0]   psg_addr,
     output  [7:0]   psg_data,
     output  reg     psg_wr_n,
-    input   [7:0]   debug_bus
+    input   [7:0]   debug_bus,
+    input   [135:0] ss_state_in,
+    output  [135:0] ss_state_out,
+    input   [1272:0] reg_ss_state_in,
+    output  [1272:0] reg_ss_state_out
 );
 
 parameter use_ssg=0, num_ch=6, use_pcm=1, use_adpcm=0, mask_div=1;
@@ -184,7 +189,10 @@ reg old_write;
 reg [7:0] din_copy;
 
 always @(posedge clk)
-    old_write <= write;
+    if( ss_apply )
+        old_write <= ss_state_in[120];
+    else
+        old_write <= write;
 
 generate
     if( use_ssg ) begin
@@ -258,6 +266,34 @@ always @(posedge clk) begin : memory_mapped_registers
         latch_fnum <= 6'd0;
         din_copy   <= 8'd0;
         part       <= 1'b0;
+    end else if( ss_apply ) begin
+        selected_register <= ss_state_in[7:0];
+        div_setting <= ss_state_in[9:8];
+        up_ch <= ss_state_in[12:10];
+        up_op <= ss_state_in[14:13];
+        up_keyon <= ss_state_in[15];
+        up_opreg <= ss_state_in[22:16];
+        up_chreg <= ss_state_in[25:23];
+        value_A <= ss_state_in[35:26];
+        value_B <= ss_state_in[43:36];
+        { clr_flag_B, clr_flag_A, enable_irq_B, enable_irq_A, load_B, load_A } <= ss_state_in[49:44];
+        fast_timers <= ss_state_in[50];
+        lfo_freq <= ss_state_in[53:51];
+        lfo_en <= ss_state_in[54];
+        csm <= ss_state_in[55];
+        effect <= ss_state_in[56];
+        pcm <= ss_state_in[65:57];
+        pcm_en <= ss_state_in[66];
+        pcm_wr <= ss_state_in[67];
+        eg_stop <= ss_state_in[68];
+        pg_stop <= ss_state_in[69];
+        psg_wr_n <= ss_state_in[70];
+        { block_ch3op1, fnum_ch3op1 } <= ss_state_in[84:71];
+        { block_ch3op2, fnum_ch3op2 } <= ss_state_in[98:85];
+        { block_ch3op3, fnum_ch3op3 } <= ss_state_in[112:99];
+        latch_fnum <= ss_state_in[118:113];
+        din_copy <= ss_state_in[128:121];
+        part <= ss_state_in[129];
     end else begin
         // WRITE IN REGISTERS
         if( write ) begin
@@ -417,8 +453,10 @@ always @(posedge clk, posedge rst)
     if( rst ) begin
         busy <= 1'b0;
         busy_cnt <= 5'd0;
-    end
-    else begin
+    end else if( ss_apply ) begin
+        busy <= ss_state_in[130];
+        busy_cnt <= ss_state_in[135:131];
+    end else begin
         if (!old_write && write && addr[0] ) begin // only set for data writes
             busy <= 1'b1;
             busy_cnt <= 5'd0;
@@ -434,6 +472,9 @@ jt12_reg #(.num_ch(num_ch)) u_reg(
     .clk        ( clk       ),      // P1
     .clk_en     ( clk_en    ),
     .din        ( din_copy  ),
+    .ss_apply   ( ss_apply  ),
+    .ss_state_in( reg_ss_state_in ),
+    .ss_state_out( reg_ss_state_out ),
 
     .up_keyon   ( up_keyon  ),
     .up_fnumlo  ( up_chreg[0]   ),
@@ -506,5 +547,37 @@ jt12_reg #(.num_ch(num_ch)) u_reg(
     .s3_enters  ( s3_enters ),
     .s4_enters  ( s4_enters )
 );
+
+assign ss_state_out[7:0] = selected_register;
+assign ss_state_out[9:8] = div_setting;
+assign ss_state_out[12:10] = up_ch;
+assign ss_state_out[14:13] = up_op;
+assign ss_state_out[15] = up_keyon;
+assign ss_state_out[22:16] = up_opreg;
+assign ss_state_out[25:23] = up_chreg;
+assign ss_state_out[35:26] = value_A;
+assign ss_state_out[43:36] = value_B;
+assign ss_state_out[49:44] = { clr_flag_B, clr_flag_A, enable_irq_B, enable_irq_A, load_B, load_A };
+assign ss_state_out[50] = fast_timers;
+assign ss_state_out[53:51] = lfo_freq;
+assign ss_state_out[54] = lfo_en;
+assign ss_state_out[55] = csm;
+assign ss_state_out[56] = effect;
+assign ss_state_out[65:57] = pcm;
+assign ss_state_out[66] = pcm_en;
+assign ss_state_out[67] = pcm_wr;
+assign ss_state_out[68] = eg_stop;
+assign ss_state_out[69] = pg_stop;
+assign ss_state_out[70] = psg_wr_n;
+assign ss_state_out[84:71] = { block_ch3op1, fnum_ch3op1 };
+assign ss_state_out[98:85] = { block_ch3op2, fnum_ch3op2 };
+assign ss_state_out[112:99] = { block_ch3op3, fnum_ch3op3 };
+assign ss_state_out[118:113] = latch_fnum;
+assign ss_state_out[119] = 1'b0;
+assign ss_state_out[120] = old_write;
+assign ss_state_out[128:121] = din_copy;
+assign ss_state_out[129] = part;
+assign ss_state_out[130] = busy;
+assign ss_state_out[135:131] = busy_cnt;
 
 endmodule

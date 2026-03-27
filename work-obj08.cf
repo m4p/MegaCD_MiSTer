@@ -1,0 +1,16 @@
+v 4
+file . "rtl/mcd_savestates.vhd" "2a6a9e252fbf041b285d9707b0527f6a1b329537" "20260327111644.602":
+  entity mcd_savestates at 1( 0) + 0 on 19;
+  architecture rtl of mcd_savestates at 102( 4303) + 0 on 20;
+file . "rtl/MCD/PCM.vhd" "5f2ca6d8138ad64174d6be50ee5236b88b299f49" "20260327111644.099":
+  entity pcm at 1( 0) + 0 on 15;
+  architecture rtl of pcm at 40( 1118) + 0 on 16;
+file . "rtl/CEGen.vhd" "67c7395faef615b0b5ce467c58bf24f3ab54857c" "20260327111643.716":
+  entity cegen at 1( 0) + 0 on 11;
+  architecture syn of cegen at 17( 243) + 0 on 12;
+file . "rtl/MCD/CDC.vhd" "bcd02512f2fccf9fb7486bcfdf045d3f4711f6af" "20260327111643.783":
+  entity cdc at 1( 0) + 0 on 13;
+  architecture rtl of cdc at 44( 1209) + 0 on 14;
+file . "rtl/MCD/CDDA.vhd" "c41652bcd51400ebb069372494f8a704b33ce6da" "20260327111644.480":
+  entity cd_dac at 1( 0) + 0 on 17;
+  architecture rtl of cd_dac at 33( 796) + 0 on 18;

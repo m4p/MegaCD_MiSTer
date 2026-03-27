@@ -45,6 +45,9 @@ module jt12_reg(
         
     input           up_sl_rr,
     input           up_ssgeg,
+    input           ss_apply,
+    input   [1272:0] ss_state_in,
+    output  [1272:0] ss_state_out,
 
     output reg       ch6op,  // 1 when the operator belongs to CH6
     output reg [2:0] cur_ch,
@@ -106,6 +109,12 @@ module jt12_reg(
 
 parameter num_ch=6; // Use only 3 (YM2203/YM2610) or 6 (YM2612/YM2608)
 
+localparam REG_SS_CSR_BITS = 528;
+localparam REG_SS_KON_BITS = 39;
+localparam REG_SS_REGCH_BITS = 150;
+localparam REG_SS_RL_BITS = 12;
+localparam REG_SS_LOCAL_LSB = REG_SS_CSR_BITS + REG_SS_CSR_BITS + REG_SS_KON_BITS + REG_SS_REGCH_BITS + REG_SS_RL_BITS;
+
 
 reg  [1:0] next_op;
 reg  [2:0] next_ch;
@@ -135,10 +144,20 @@ wire [4:0] next = { next_op, next_ch };
 wire [4:0] cur  = {  cur_op,  cur_ch };
 
 wire [2:0] fb_I;
+wire [527:0] ss_csr0_state_out;
+wire [527:0] ss_csr1_state_out;
+wire [38:0] ss_kon_state_out;
+wire [149:0] ss_regch_state_out;
+wire [11:0] ss_rl_state_out;
 
 always @(posedge clk) if( clk_en ) begin
-    fb_II <= fb_I;
-    ch6op <= next_ch==3'd6;
+    if( ss_apply ) begin
+        fb_II <= ss_state_in[REG_SS_LOCAL_LSB+3:REG_SS_LOCAL_LSB+1];
+        ch6op <= ss_state_in[REG_SS_LOCAL_LSB+9];
+    end else begin
+        fb_II <= fb_I;
+        ch6op <= next_ch==3'd6;
+    end
 end 
 
 // FNUM and BLOCK
@@ -212,8 +231,14 @@ end
 
 always @(posedge clk) begin : up_counter
     if( clk_en ) begin
+        if( ss_apply ) begin
+            cur_ch <= ss_state_in[REG_SS_LOCAL_LSB+6:REG_SS_LOCAL_LSB+4];
+            cur_op <= ss_state_in[REG_SS_LOCAL_LSB+8:REG_SS_LOCAL_LSB+7];
+            zero <= ss_state_in[REG_SS_LOCAL_LSB];
+        end else begin
         { cur_op, cur_ch }  <= { next_op, next_ch };
         zero    <= next == 5'd0;
+        end
     end
 end
 
@@ -222,6 +247,7 @@ jt12_kon #(.num_ch(num_ch)) u_kon(
     .rst        ( rst       ),
     .clk        ( clk       ),
     .clk_en     ( clk_en    ),
+    .ss_apply   ( ss_apply  ),
     .keyon_op   ( keyon_op  ),
     .keyon_ch   ( keyon_ch  ),
     .next_op    ( next_op   ),
@@ -230,6 +256,8 @@ jt12_kon #(.num_ch(num_ch)) u_kon(
     .csm        ( csm       ),
     // .flag_A      ( flag_A    ),
     .overflow_A ( overflow_A),
+    .ss_state_in( ss_state_in[1055+39:1056] ),
+    .ss_state_out( ss_kon_state_out ),
     
     .keyon_I    ( keyon_I   )
 );
@@ -260,8 +288,11 @@ generate
             .rst            ( rst           ),
             .clk            ( clk           ),
             .clk_en         ( clk_en        ),
+            .ss_apply       ( ss_apply      ),
             .din            ( din           ),
             .shift_in       ( shift_out     ),
+            .ss_state_in    ( ss_state_in[527:0] ),
+            .ss_state_out   ( ss_csr0_state_out ),
             .shift_out      ( shift_middle  ),
             .up_tl          ( up_tl         ),     
             .up_dt1         ( up_dt1        ),    
@@ -283,8 +314,11 @@ generate
             .rst            ( rst           ),
             .clk            ( clk           ),
             .clk_en         ( clk_en        ),
+            .ss_apply       ( ss_apply      ),
             .din            ( din           ),
             .shift_in       ( shift_middle  ),
+            .ss_state_in    ( ss_state_in[1055:528] ),
+            .ss_state_out   ( ss_csr1_state_out ),
             .shift_out      ( shift_out     ),
             .up_tl          ( up_tl         ),     
             .up_dt1         ( up_dt1        ),    
@@ -304,8 +338,11 @@ generate
             .rst            ( rst           ),
             .clk            ( clk           ),
             .clk_en         ( clk_en        ),
+            .ss_apply       ( ss_apply      ),
             .din            ( din           ),
             .shift_in       ( shift_out     ),
+            .ss_state_in    ( ss_state_in[527:0] ),
+            .ss_state_out   ( ss_csr0_state_out ),
             .shift_out      ( shift_out     ),
             .up_tl          ( up_tl         ),     
             .up_dt1         ( up_dt1        ),    
@@ -347,7 +384,10 @@ jt12_sh_rst #(.width(regch_width),.stages(num_ch)) u_regch(
     .clk    ( clk       ),
     .clk_en ( clk_en    ),
     .rst    ( rst       ),
+    .ss_apply( ss_apply ),
     .din    ( regch_in  ),
+    .ss_state_in( ss_state_in[1244:1095] ),
+    .ss_state_out( ss_regch_state_out ),
     .drop   ( regch_out )
 );
 
@@ -360,7 +400,10 @@ if( num_ch==6 ) begin
         .clk    ( clk       ),
         .clk_en ( clk_en    ),
         .rst    ( rst       ),
+        .ss_apply( ss_apply ),
         .din    ( up_pms_ch ? rl_in :  rl   ),
+        .ss_state_in( ss_state_in[1256:1245] ),
+        .ss_state_out( ss_rl_state_out ),
         .drop   ( rl    )
     );
 end else begin // YM2203 has no stereo output
@@ -368,5 +411,17 @@ end else begin // YM2203 has no stereo output
 end
     
 endgenerate
+
+assign ss_state_out[527:0] = ss_csr0_state_out;
+assign ss_state_out[1055:528] = num_ch == 6 ? ss_csr1_state_out : 528'd0;
+assign ss_state_out[1094:1056] = ss_kon_state_out;
+assign ss_state_out[1244:1095] = ss_regch_state_out;
+assign ss_state_out[1256:1245] = num_ch == 6 ? ss_rl_state_out : 12'd0;
+assign ss_state_out[REG_SS_LOCAL_LSB] = zero;
+assign ss_state_out[REG_SS_LOCAL_LSB+3:REG_SS_LOCAL_LSB+1] = fb_II;
+assign ss_state_out[REG_SS_LOCAL_LSB+6:REG_SS_LOCAL_LSB+4] = cur_ch;
+assign ss_state_out[REG_SS_LOCAL_LSB+8:REG_SS_LOCAL_LSB+7] = cur_op;
+assign ss_state_out[REG_SS_LOCAL_LSB+9] = ch6op;
+assign ss_state_out[1272:REG_SS_LOCAL_LSB+10] = 6'd0;
 `endif
 endmodule

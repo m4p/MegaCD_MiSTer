@@ -28,5 +28,19 @@ The same document also includes build and runtime usage for `linux/debug_bridge/
 It also documents the browser-facing Python server in `linux/debug_bridge/mcd_debug_web.py`.
 It also documents the local MCP server in `linux/debug_bridge/mcd_debug_mcp.py`.
 
+### Savestates
+MiSTer savestate support is implemented in this branch and documented in
+`docs/savestates.md`.
+
+Current contract:
+- gameplay-correct restore is the target
+- audio/video/CD pipelines may need a short settle period after load
+- saves are only valid at the enforced paused/quiescent boundary
+
+Current release status:
+- the serializer/controller/UI path is wired in RTL
+- real MiSTer hardware save/load smoke tests are still required before calling
+  it production-ready
+
 ### Pier Solar
 Place cartridge dump named cart.rom into game's folder

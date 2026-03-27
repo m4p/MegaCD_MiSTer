@@ -28,12 +28,18 @@ module jt89_tone(
     input               rst,
     input         [9:0] tone,
     input         [3:0] vol,
+    input               ss_apply,
+    input         [9:0] ss_cnt_in,
+    input               ss_out_in,
+    output        [9:0] ss_cnt_out,
     output        [8:0] snd,
     output reg          out
 );
 
 reg [9:0] cnt;
 reg last_out;
+
+assign ss_cnt_out = cnt;
 
 jt89_vol u_vol(
     .rst    ( rst     ),
@@ -48,6 +54,9 @@ always @(posedge clk)
     if( rst ) begin
         cnt <= 10'd0;
         out <= 1'b0;
+    end else if( ss_apply ) begin
+        cnt <= ss_cnt_in;
+        out <= ss_out_in;
     end else if( clk_en ) begin
         if( tone==10'd0 || tone==10'd1 )    // special case. This is used for sample playing.
             out <= 1'b1;

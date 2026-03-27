@@ -24,7 +24,10 @@ module jt12_sh #(parameter width=5, stages=24 )
 (
 	input 				clk,
 	input				clk_en /* synthesis direct_enable */,
+	input				ss_apply,
 	input	[width-1:0]	din,
+	input	[width*stages-1:0] ss_state_in,
+	output	[width*stages-1:0] ss_state_out,
    	output	[width-1:0]	drop
 );
 
@@ -33,10 +36,14 @@ reg [stages-1:0] bits[width-1:0];
 genvar i;
 generate
 	for (i=0; i < width; i=i+1) begin: bit_shifter
-		always @(posedge clk) if(clk_en) begin
-			bits[i] <= {bits[i][stages-2:0], din[i]};
-		end
+		always @(posedge clk)
+			if(ss_apply) begin
+				bits[i] <= ss_state_in[(i*stages) +: stages];
+			end else if(clk_en) begin
+				bits[i] <= {bits[i][stages-2:0], din[i]};
+			end
 		assign drop[i] = bits[i][stages-1];
+		assign ss_state_out[(i*stages) +: stages] = bits[i];
 	end
 endgenerate
 

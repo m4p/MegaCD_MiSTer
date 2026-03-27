@@ -27,6 +27,7 @@ module jt12_timers(
   input     clk,
   input     rst,
   input     clk_en /* synthesis direct_enable */,
+  input         ss_apply,
   input         zero,
   input [9:0] value_A,
   input [7:0] value_B,
@@ -39,7 +40,9 @@ module jt12_timers(
   output    flag_A,
   output    flag_B,
   output    overflow_A,
-  output    irq_n
+  output    irq_n,
+  input [29:0] ss_state_in,
+  output [29:0] ss_state_out
 );
 
 parameter num_ch = 6;
@@ -63,24 +66,30 @@ jt12_timer #(.CW(10)) timer_A(
     .clk        ( clk         ),
     .rst        ( rst         ),
     .cen        ( clk_en      ),
+    .ss_apply   ( ss_apply    ),
     .zero       ( zero        ),
     .start_value( value_A     ),
     .load       ( load_A      ),
     .clr_flag   ( clr_flag_A  ),
     .flag       ( flag_A      ),
-    .overflow   ( overflow_A  )
+    .overflow   ( overflow_A  ),
+    .ss_state_in( ss_state_in[15:0] ),
+    .ss_state_out( ss_state_out[15:0] )
 );
 
 jt12_timer #(.CW(8),.FREE_EN(1)) timer_B(
     .clk        ( clk         ),
     .rst        ( rst         ),
     .cen        ( clk_en      ),
+    .ss_apply   ( ss_apply    ),
     .zero       ( zero        ),
     .start_value( value_B     ),
     .load       ( load_B      ),
     .clr_flag   ( clr_flag_B  ),
     .flag       ( flag_B      ),
-    .overflow   (             )
+    .overflow   (             ),
+    .ss_state_in( ss_state_in[29:16] ),
+    .ss_state_out( ss_state_out[29:16] )
 );
 
 endmodule
@@ -93,12 +102,15 @@ module jt12_timer #(parameter
     input   rst,
     input   clk,
     input   cen,
+    input   ss_apply,
     input   zero,
     input   [CW-1:0] start_value,
     input   load,
     input   clr_flag,
     output reg flag,
-    output reg overflow
+    output reg overflow,
+    input [CW+FW+1:0] ss_state_in,
+    output [CW+FW+1:0] ss_state_out
 );
 /* verilator lint_off WIDTH */
 reg          load_l;
@@ -109,6 +121,8 @@ reg          free_ov;
 always@(posedge clk, posedge rst)
     if( rst )
         flag <= 1'b0;
+    else if( ss_apply )
+        flag <= ss_state_in[0];
     else /*if(cen)*/ begin
         if( clr_flag )
             flag <= 1'b0;
@@ -121,20 +135,32 @@ always @(*) begin
 end
 
 always @(posedge clk) begin
-    load_l <= load;
-    if( !load_l && load ) begin
-        cnt <= start_value;
-    end else if( cen && zero && load )
-        cnt <= overflow ? start_value : next;
+    if( ss_apply ) begin
+        load_l <= ss_state_in[1];
+        cnt <= ss_state_in[CW+1:2];
+    end else begin
+        load_l <= load;
+        if( !load_l && load ) begin
+            cnt <= start_value;
+        end else if( cen && zero && load )
+            cnt <= overflow ? start_value : next;
+    end
 end
 
 // Free running counter
 always @(posedge clk) begin
     if( rst ) begin
         free_cnt <= 0;
+    end else if( ss_apply ) begin
+        free_cnt <= ss_state_in[CW+FW+1:CW+2];
     end else if( cen && zero ) begin
         free_cnt <= free_cnt+1'd1;
     end
 end
+
+assign ss_state_out[0] = flag;
+assign ss_state_out[1] = load_l;
+assign ss_state_out[CW+1:2] = cnt;
+assign ss_state_out[CW+FW+1:CW+2] = free_cnt;
 /* verilator lint_on WIDTH */
 endmodule

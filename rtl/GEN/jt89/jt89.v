@@ -36,15 +36,39 @@ module jt89(
     input          rst,
     input          wr_n,
     input    [7:0] din,
+    input          ss_req,
+    input          ss_wr,
+    input    [2:0] ss_addr,
+    input   [31:0] ss_din,
+    output  [31:0] ss_dout,
+    output         ss_ack,
     output  signed [10:0] sound,
     output         ready
 );
 
 parameter interpol16=0;
+localparam [2:0] JT89_SS_CTRL_ADDR = 3'b111;
+localparam [31:0] JT89_SS_WORDS = 32'd4;
 
 wire signed [ 8:0] ch0, ch1, ch2, noise;
+wire [9:0] tone0_ss_cnt;
+wire [9:0] tone1_ss_cnt;
+wire [9:0] tone2_ss_cnt;
+wire [15:0] noise_ss_shift;
+wire [10:0] noise_ss_cnt;
+wire tone0_out;
+wire tone1_out;
+wire out2;
+
+reg [31:0] ss_shadow[0:3];
+reg        ss_req_d;
+reg [31:0] ss_dout_reg;
+reg        ss_commit_pending;
+wire       ss_apply = ss_commit_pending;
 
 assign ready = 1'b1;
+assign ss_dout = ss_dout_reg;
+assign ss_ack = ss_req_d;
 (* direct_enable = 1 *) reg cen_16;
 (* direct_enable = 1 *) reg cen_4;
 
@@ -73,6 +97,9 @@ always @(posedge clk )
     if( rst ) begin
         cen_16 <= 1'b1;
         cen_4  <= 1'b1;
+    end else if( ss_apply ) begin
+        cen_16 <= ss_shadow[1][25];
+        cen_4  <= ss_shadow[1][26];
     end else begin
         cen_16 <= clk_en & (&clk_div);
         cen_4  <= clk_en & (&clk_div[1:0]);
@@ -81,6 +108,8 @@ always @(posedge clk )
 always @(posedge clk )
     if( rst )
         clk_div <= 4'd0;
+    else if( ss_apply )
+        clk_div <= ss_shadow[1][22:19];
     else if( clk_en )
         clk_div <= clk_div + 1'b1;
 
@@ -92,6 +121,22 @@ always @(posedge clk)
         { vol0, vol1, vol2, vol3 } <= {16{1'b1}};
         { tone0, tone1, tone2 } <= 30'd0;
         ctrl3 <= 3'b100;
+        regn <= 3'd0;
+        clr_noise <= 1'b0;
+        last_wr <= 1'b1;
+    end
+    else if( ss_apply ) begin
+        tone0 <= ss_shadow[0][9:0];
+        tone1 <= ss_shadow[0][19:10];
+        tone2 <= ss_shadow[0][29:20];
+        ctrl3 <= {ss_shadow[1][23], ss_shadow[0][31:30]};
+        vol0 <= ss_shadow[1][3:0];
+        vol1 <= ss_shadow[1][7:4];
+        vol2 <= ss_shadow[1][11:8];
+        vol3 <= ss_shadow[1][15:12];
+        regn <= ss_shadow[1][18:16];
+        clr_noise <= 1'b0;
+        last_wr <= ss_shadow[1][24];
     end
     else begin
         last_wr <= wr_n;
@@ -113,14 +158,84 @@ always @(posedge clk)
         else clr_noise <= 1'b0;
     end
 
+always @(posedge clk)
+    if( rst ) begin
+        ss_req_d <= 1'b0;
+        ss_dout_reg <= 32'd0;
+        ss_commit_pending <= 1'b0;
+        ss_shadow[0] <= 32'd0;
+        ss_shadow[1] <= 32'd0;
+        ss_shadow[2] <= 32'd0;
+        ss_shadow[3] <= 32'd0;
+    end else begin
+        ss_req_d <= ss_req;
+
+        if( ss_req ) begin
+            ss_dout_reg <= 32'd0;
+            case( ss_addr )
+                3'd0: begin
+                    ss_dout_reg[9:0] <= tone0;
+                    ss_dout_reg[19:10] <= tone1;
+                    ss_dout_reg[29:20] <= tone2;
+                    ss_dout_reg[31:30] <= ctrl3[1:0];
+                end
+                3'd1: begin
+                    ss_dout_reg[3:0] <= vol0;
+                    ss_dout_reg[7:4] <= vol1;
+                    ss_dout_reg[11:8] <= vol2;
+                    ss_dout_reg[15:12] <= vol3;
+                    ss_dout_reg[18:16] <= regn;
+                    ss_dout_reg[22:19] <= clk_div;
+                    ss_dout_reg[23] <= ctrl3[2];
+                    ss_dout_reg[24] <= last_wr;
+                    ss_dout_reg[25] <= cen_16;
+                    ss_dout_reg[26] <= cen_4;
+                end
+                3'd2: begin
+                    ss_dout_reg[9:0] <= tone0_ss_cnt;
+                    ss_dout_reg[10] <= tone0_out;
+                    ss_dout_reg[20:11] <= tone1_ss_cnt;
+                    ss_dout_reg[21] <= tone1_out;
+                    ss_dout_reg[31:22] <= tone2_ss_cnt;
+                end
+                3'd3: begin
+                    ss_dout_reg[0] <= out2;
+                    ss_dout_reg[16:1] <= noise_ss_shift;
+                    ss_dout_reg[27:17] <= noise_ss_cnt;
+                end
+                default: begin
+                    if( ss_addr == JT89_SS_CTRL_ADDR ) ss_dout_reg <= JT89_SS_WORDS;
+                end
+            endcase
+        end
+
+        if( ss_req && ss_wr ) begin
+            case( ss_addr )
+                3'd0: ss_shadow[0] <= ss_din;
+                3'd1: ss_shadow[1] <= ss_din;
+                3'd2: ss_shadow[2] <= ss_din;
+                3'd3: ss_shadow[3] <= ss_din;
+                default: begin
+                    if( ss_addr == JT89_SS_CTRL_ADDR && ss_din[31] ) ss_commit_pending <= 1'b1;
+                end
+            endcase
+        end
+
+        if( ss_apply ) ss_commit_pending <= 1'b0;
+    end
+
 jt89_tone u_tone0(
     .clk    ( clk       ),
     .rst    ( rst       ),
     .clk_en ( cen_16    ),
     .vol    ( vol0      ),
     .tone   ( tone0     ),
+    .ss_apply( ss_apply ),
+    .ss_cnt_in( ss_shadow[2][9:0] ),
+    .ss_out_in( ss_shadow[2][10] ),
+    .ss_cnt_out( tone0_ss_cnt ),
     .snd    ( ch0       ),
-    .out    (           )
+    .out    ( tone0_out )
 );
 
 jt89_tone u_tone1(
@@ -129,11 +244,13 @@ jt89_tone u_tone1(
     .clk_en ( cen_16    ),
     .vol    ( vol1      ),
     .tone   ( tone1     ),
+    .ss_apply( ss_apply ),
+    .ss_cnt_in( ss_shadow[2][20:11] ),
+    .ss_out_in( ss_shadow[2][21] ),
+    .ss_cnt_out( tone1_ss_cnt ),
     .snd    ( ch1       ),
-    .out    (           )
+    .out    ( tone1_out )
 );
-
-wire out2;
 
 jt89_tone u_tone2(
     .clk    ( clk       ),
@@ -141,6 +258,10 @@ jt89_tone u_tone2(
     .clk_en ( cen_16    ),
     .vol    ( vol2      ),
     .tone   ( tone2     ),
+    .ss_apply( ss_apply ),
+    .ss_cnt_in( ss_shadow[2][31:22] ),
+    .ss_out_in( ss_shadow[3][0] ),
+    .ss_cnt_out( tone2_ss_cnt ),
     .snd    ( ch2       ),
     .out    ( out2      )
 );
@@ -153,6 +274,11 @@ jt89_noise u_noise(
     .vol    ( vol3      ),
     .ctrl3  ( ctrl3     ),
     .tone2  ( tone2     ),
+    .ss_apply( ss_apply ),
+    .ss_shift_in( ss_shadow[3][16:1] ),
+    .ss_cnt_in( ss_shadow[3][27:17] ),
+    .ss_shift_out( noise_ss_shift ),
+    .ss_cnt_out( noise_ss_cnt ),
     .snd    ( noise     )
 );
 

@@ -70,6 +70,45 @@ entity MCD is
 
 		DEBUG_PAUSE    : in std_logic;
 		DEBUG_IDLE     : out std_logic;
+		SAVESTATE_PAUSE: in std_logic;
+		SAVESTATE_IDLE : out std_logic;
+		SAVESTATE_RAM_REQ   : in std_logic;
+		SAVESTATE_RAM_WR    : in std_logic;
+		SAVESTATE_RAM_TARGET: in std_logic_vector(3 downto 0);
+		SAVESTATE_RAM_ADDR  : in std_logic_vector(17 downto 0);
+		SAVESTATE_RAM_DIN   : in std_logic_vector(15 downto 0);
+		SAVESTATE_RAM_DOUT  : out std_logic_vector(15 downto 0);
+		SAVESTATE_RAM_ACK   : out std_logic;
+		SAVESTATE_CPU_REQ   : in std_logic := '0';
+		SAVESTATE_CPU_WR    : in std_logic := '0';
+		SAVESTATE_CPU_ADDR  : in std_logic_vector(5 downto 0) := (others => '0');
+		SAVESTATE_CPU_DIN   : in std_logic_vector(31 downto 0) := (others => '0');
+		SAVESTATE_CPU_DOUT  : out std_logic_vector(31 downto 0);
+		SAVESTATE_CPU_ACK   : out std_logic;
+		SAVESTATE_CDC_REQ   : in std_logic := '0';
+		SAVESTATE_CDC_WR    : in std_logic := '0';
+		SAVESTATE_CDC_ADDR  : in std_logic_vector(3 downto 0) := (others => '0');
+		SAVESTATE_CDC_DIN   : in std_logic_vector(31 downto 0) := (others => '0');
+		SAVESTATE_CDC_DOUT  : out std_logic_vector(31 downto 0);
+		SAVESTATE_CDC_ACK   : out std_logic;
+		SAVESTATE_PCM_REQ   : in std_logic := '0';
+		SAVESTATE_PCM_WR    : in std_logic := '0';
+		SAVESTATE_PCM_ADDR  : in std_logic_vector(4 downto 0) := (others => '0');
+		SAVESTATE_PCM_DIN   : in std_logic_vector(31 downto 0) := (others => '0');
+		SAVESTATE_PCM_DOUT  : out std_logic_vector(31 downto 0);
+		SAVESTATE_PCM_ACK   : out std_logic;
+		SAVESTATE_CDDA_REQ  : in std_logic := '0';
+		SAVESTATE_CDDA_WR   : in std_logic := '0';
+		SAVESTATE_CDDA_ADDR : in std_logic_vector(10 downto 0) := (others => '0');
+		SAVESTATE_CDDA_DIN  : in std_logic_vector(31 downto 0) := (others => '0');
+		SAVESTATE_CDDA_DOUT : out std_logic_vector(31 downto 0);
+		SAVESTATE_CDDA_ACK  : out std_logic;
+		SAVESTATE_ASIC_REQ  : in std_logic := '0';
+		SAVESTATE_ASIC_WR   : in std_logic := '0';
+		SAVESTATE_ASIC_ADDR : in std_logic_vector(5 downto 0) := (others => '0');
+		SAVESTATE_ASIC_DIN  : in std_logic_vector(31 downto 0) := (others => '0');
+		SAVESTATE_ASIC_DOUT : out std_logic_vector(31 downto 0);
+		SAVESTATE_ASIC_ACK  : out std_logic;
 		DEBUG_WORD_REQ : in std_logic;
 		DEBUG_WORD_WE  : in std_logic;
 		DEBUG_WORD_BANK: in std_logic;
@@ -77,7 +116,7 @@ entity MCD is
 		DEBUG_WORD_DIN : in std_logic_vector(15 downto 0);
 		DEBUG_WORD_DOUT: out std_logic_vector(15 downto 0);
 		DEBUG_WORD_ACK : out std_logic;
-		
+
 		DBG_S68K_A		: out std_logic_vector(23 downto 0)
 	);
 end MCD;
@@ -149,6 +188,9 @@ architecture rtl of MCD is
 	signal ASIC_FD_DAT	: std_logic_vector(10 downto 0);
 	signal ASIC_FD_WR		: std_logic;
 	signal ASIC_DEBUG_IDLE: std_logic;
+	signal PAUSE_ACTIVE   : std_logic;
+	signal SAVESTATE_RAM_REQ_D    : std_logic;
+	signal SAVESTATE_RAM_TARGET_D : std_logic_vector(3 downto 0);
 
 	signal RUN_EN         : std_logic;
 
@@ -169,10 +211,17 @@ architecture rtl of MCD is
 	signal WORDRAM1_ADDR_I : std_logic_vector(15 downto 0);
 	signal WORDRAM1_DATA_I : std_logic_vector(15 downto 0);
 	signal WORDRAM1_WREN_I : std_logic;
+	signal CDC_RAM_ADDR_B_I : std_logic_vector(12 downto 0);
+	signal CDC_RAM_DO_I     : std_logic_vector(15 downto 0);
+	signal CDC_RAM_WE_I     : std_logic;
+	signal CDC_RAM_Q_B      : std_logic_vector(15 downto 0);
+	signal PCM_RAM_ADDR_B_I : std_logic_vector(15 downto 0);
+	signal PCM_RAM_DO_B_I   : std_logic_vector(7 downto 0);
+	signal PCM_RAM_WE_B_I   : std_logic;
 
 	signal DEBUG_WORD_REQ_D  : std_logic;
 	signal DEBUG_WORD_BANK_D : std_logic;
-	
+
 	signal GENIE_DATA    : std_logic_vector(15 downto 0);
 	
 	component CODES
@@ -197,7 +246,8 @@ architecture rtl of MCD is
 	
 begin
 
-	RUN_EN <= ENABLE and not DEBUG_PAUSE;
+	PAUSE_ACTIVE <= DEBUG_PAUSE or SAVESTATE_PAUSE;
+	RUN_EN <= ENABLE and not PAUSE_ACTIVE;
 
 	gg : CODES
 	generic map(
@@ -222,8 +272,8 @@ begin
 		RST_N      	=> RST_N,
 		
 		RESET_I_N	=> S68K_RESET_N,
-		CLKEN_P   	=> S68K_CE_R and not DEBUG_PAUSE,
-		CLKEN_N		=> S68K_CE_F and not DEBUG_PAUSE,
+		CLKEN_P   	=> S68K_CE_R and not PAUSE_ACTIVE,
+		CLKEN_N		=> S68K_CE_F and not PAUSE_ACTIVE,
 		A   			=> S68K_A,
 		DI   			=> GENIE_DATA,
 		DO   			=> S68K_DO,
@@ -238,7 +288,13 @@ begin
 		HALT_I_N		=> S68K_HALT_N,
 		BERR_N   	=> '1',
 		BR_N   		=> '1',
-		BGACK_N   	=> '1'
+		BGACK_N   	=> '1',
+		SS_REQ		=> SAVESTATE_PAUSE and SAVESTATE_CPU_REQ,
+		SS_WR			=> SAVESTATE_CPU_WR,
+		SS_ADDR		=> SAVESTATE_CPU_ADDR,
+		SS_DIN		=> SAVESTATE_CPU_DIN,
+		SS_DOUT		=> SAVESTATE_CPU_DOUT,
+		SS_ACK		=> SAVESTATE_CPU_ACK
 	);
 	
 	S68K_DI(7 downto 0) <= CDC_DO when CDC_N = '0' else
@@ -291,7 +347,7 @@ begin
 		PRG_OE_N  		=> PRG_OE_N_I,
 		PRG_RFS  		=> PRG_RFS_I,
 		PRG_RDY  		=> PRG_RDY,
-		
+
 		PCM_A   			=> PCM_A_I,
 		PCM_DI   		=> PCM_DI,
 		PCM_WE_N   		=> PCM_WE_N_I,
@@ -336,42 +392,68 @@ begin
 		
 		FD_DAT 			=> ASIC_FD_DAT,
 		FD_WR 			=> ASIC_FD_WR,
-		
+
 		LED_RED   		=> LED_RED,
 		LED_GREEN   	=> LED_GREEN,
-		DEBUG_IDLE    => ASIC_DEBUG_IDLE
+		DEBUG_IDLE    => ASIC_DEBUG_IDLE,
+		SS_REQ        => SAVESTATE_PAUSE and SAVESTATE_ASIC_REQ,
+		SS_WR         => SAVESTATE_ASIC_WR,
+		SS_ADDR       => SAVESTATE_ASIC_ADDR,
+		SS_DIN        => SAVESTATE_ASIC_DIN,
+		SS_DOUT       => SAVESTATE_ASIC_DOUT,
+		SS_ACK        => SAVESTATE_ASIC_ACK
 	);
-	
+
 	MCD_RST_N <= ERES_N;
 	DEBUG_IDLE <= ASIC_DEBUG_IDLE;
+	SAVESTATE_IDLE <= ASIC_DEBUG_IDLE;
 
 	PRG_A <= PRG_A_I;
 	PRG_DO <= PRG_DO_I;
-	PRG_WRL_N <= '1' when DEBUG_PAUSE = '1' else PRG_WRL_N_I;
-	PRG_WRH_N <= '1' when DEBUG_PAUSE = '1' else PRG_WRH_N_I;
-	PRG_OE_N <= '1' when DEBUG_PAUSE = '1' else PRG_OE_N_I;
-	PRG_RFS <= '0' when DEBUG_PAUSE = '1' else PRG_RFS_I;
+	PRG_WRL_N <= '1' when PAUSE_ACTIVE = '1' else PRG_WRL_N_I;
+	PRG_WRH_N <= '1' when PAUSE_ACTIVE = '1' else PRG_WRH_N_I;
+	PRG_OE_N <= '1' when PAUSE_ACTIVE = '1' else PRG_OE_N_I;
+	PRG_RFS <= '0' when PAUSE_ACTIVE = '1' else PRG_RFS_I;
 
 	PCM_A <= PCM_A_I;
 	PCM_DO <= PCM_DO_I;
-	PCM_WE_N <= '1' when DEBUG_PAUSE = '1' else PCM_WE_N_I;
-	PCM_N <= '1' when DEBUG_PAUSE = '1' else PCM_N_I;
+	PCM_WE_N <= '1' when PAUSE_ACTIVE = '1' else PCM_WE_N_I;
+	PCM_N <= '1' when PAUSE_ACTIVE = '1' else PCM_N_I;
 
 	BRAM_A <= S68K_A(13 downto 1);
 	BRAM_DO <= S68K_DO(7 downto 0);
-	BRAM_WE <= '0' when DEBUG_PAUSE = '1' else not (CLWE_N or BRAM_N);
+	BRAM_WE <= '0' when PAUSE_ACTIVE = '1' else not (CLWE_N or BRAM_N);
 
-	WORDRAM0_ADDR_I <= DEBUG_WORD_ADDR when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '0' else WORDRAM0_A;
-	WORDRAM0_DATA_I <= DEBUG_WORD_DIN when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '0' else WORDRAM0_DO;
-	WORDRAM0_WREN_I <= DEBUG_WORD_WE when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '0' else
+	WORDRAM0_ADDR_I <= SAVESTATE_RAM_ADDR(15 downto 0) when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0011" else
+	                   DEBUG_WORD_ADDR when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '0' else WORDRAM0_A;
+	WORDRAM0_DATA_I <= SAVESTATE_RAM_DIN when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0011" else
+	                   DEBUG_WORD_DIN when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '0' else WORDRAM0_DO;
+	WORDRAM0_WREN_I <= SAVESTATE_RAM_WR when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0011" else
+	                   DEBUG_WORD_WE when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '0' else
 	                   '0' when DEBUG_PAUSE = '1' else WORDRAM0_WR;
 
-	WORDRAM1_ADDR_I <= DEBUG_WORD_ADDR when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '1' else WORDRAM1_A;
-	WORDRAM1_DATA_I <= DEBUG_WORD_DIN when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '1' else WORDRAM1_DO;
-	WORDRAM1_WREN_I <= DEBUG_WORD_WE when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '1' else
+	WORDRAM1_ADDR_I <= SAVESTATE_RAM_ADDR(15 downto 0) when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0100" else
+	                   DEBUG_WORD_ADDR when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '1' else WORDRAM1_A;
+	WORDRAM1_DATA_I <= SAVESTATE_RAM_DIN when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0100" else
+	                   DEBUG_WORD_DIN when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '1' else WORDRAM1_DO;
+	WORDRAM1_WREN_I <= SAVESTATE_RAM_WR when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0100" else
+	                   DEBUG_WORD_WE when DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' and DEBUG_WORD_BANK = '1' else
 	                   '0' when DEBUG_PAUSE = '1' else WORDRAM1_WR;
-	
-	
+
+	CDC_RAM_ADDR_B_I <= SAVESTATE_RAM_ADDR(12 downto 0) when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0101" else
+	                    CDC_RAM_A_WR(13 downto 1);
+	CDC_RAM_DO_I <= SAVESTATE_RAM_DIN when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0101" else
+	                CDC_RAM_DO;
+	CDC_RAM_WE_I <= SAVESTATE_RAM_WR when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0101" else
+	                CDC_RAM_WE;
+
+	PCM_RAM_ADDR_B_I <= SAVESTATE_RAM_ADDR(15 downto 0) when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0110" else
+	                    PCM_RAM_ADDR_B;
+	PCM_RAM_DO_B_I <= SAVESTATE_RAM_DIN(7 downto 0);
+	PCM_RAM_WE_B_I <= SAVESTATE_RAM_WR when SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' and SAVESTATE_RAM_TARGET = "0110" else
+	                    '0';
+
+
 	WORDRAM0 : entity work.spram
 	generic map(16,16)
 	port map(
@@ -397,16 +479,28 @@ begin
 		if RST_N = '0' then
 			DEBUG_WORD_REQ_D <= '0';
 			DEBUG_WORD_BANK_D <= '0';
+			SAVESTATE_RAM_REQ_D <= '0';
+			SAVESTATE_RAM_TARGET_D <= (others => '0');
 		elsif rising_edge(CLK) then
 			DEBUG_WORD_REQ_D <= DEBUG_PAUSE and DEBUG_WORD_REQ;
 			if DEBUG_PAUSE = '1' and DEBUG_WORD_REQ = '1' then
 				DEBUG_WORD_BANK_D <= DEBUG_WORD_BANK;
+			end if;
+			SAVESTATE_RAM_REQ_D <= SAVESTATE_PAUSE and SAVESTATE_RAM_REQ;
+			if SAVESTATE_PAUSE = '1' and SAVESTATE_RAM_REQ = '1' then
+				SAVESTATE_RAM_TARGET_D <= SAVESTATE_RAM_TARGET;
 			end if;
 		end if;
 	end process;
 
 	DEBUG_WORD_ACK <= DEBUG_WORD_REQ_D;
 	DEBUG_WORD_DOUT <= WORDRAM1_DI when DEBUG_WORD_BANK_D = '1' else WORDRAM0_DI;
+	SAVESTATE_RAM_ACK <= SAVESTATE_RAM_REQ_D;
+	SAVESTATE_RAM_DOUT <= WORDRAM0_DI when SAVESTATE_RAM_TARGET_D = "0011" else
+	                      WORDRAM1_DI when SAVESTATE_RAM_TARGET_D = "0100" else
+	                      CDC_RAM_Q_B when SAVESTATE_RAM_TARGET_D = "0101" else
+	                      x"00" & PCM_RAM_DI_B when SAVESTATE_RAM_TARGET_D = "0110" else
+	                      (others => '0');
 	
 	
 	CDC : entity work.CDC
@@ -432,12 +526,18 @@ begin
 		
 		CD_DI   		=> CDC_DATA,
 		CD_WR   		=> CDC_DAT_WR,
-		
+
 		RAM_A_WR   	=> CDC_RAM_A_WR,
 		RAM_A_RD   	=> CDC_RAM_A_RD,
 		RAM_DI   	=> CDC_RAM_DI,
 		RAM_DO   	=> CDC_RAM_DO,
-		RAM_WE   	=> CDC_RAM_WE
+		RAM_WE   	=> CDC_RAM_WE,
+		SS_REQ      => SAVESTATE_PAUSE and SAVESTATE_CDC_REQ,
+		SS_WR       => SAVESTATE_CDC_WR,
+		SS_ADDR     => SAVESTATE_CDC_ADDR,
+		SS_DIN      => SAVESTATE_CDC_DIN,
+		SS_DOUT     => SAVESTATE_CDC_DOUT,
+		SS_ACK      => SAVESTATE_CDC_ACK
 	);
 	
 	CDC_RAM : entity work.dpram_dif
@@ -447,9 +547,10 @@ begin
 		address_a	=> CDC_RAM_A_RD(13 downto 0),
 		q_a			=> CDC_RAM_DI,
 
-		address_b	=> CDC_RAM_A_WR(13 downto 1),
-		data_b		=> CDC_RAM_DO,
-		wren_b		=> CDC_RAM_WE
+		address_b	=> CDC_RAM_ADDR_B_I,
+		data_b		=> CDC_RAM_DO_I,
+		wren_b		=> CDC_RAM_WE_I,
+		q_b			=> CDC_RAM_Q_B
 	);
 	
 	
@@ -474,12 +575,18 @@ begin
 		RAM_WE_A		=> PCM_RAM_WE_A,
 		RAM_ADDR_B	=> PCM_RAM_ADDR_B,
 		RAM_DI_B		=> PCM_RAM_DI_B,
-		
+		SS_REQ      => SAVESTATE_PAUSE and SAVESTATE_PCM_REQ,
+		SS_WR       => SAVESTATE_PCM_WR,
+		SS_ADDR     => SAVESTATE_PCM_ADDR,
+		SS_DIN      => SAVESTATE_PCM_DIN,
+		SS_DOUT     => SAVESTATE_PCM_DOUT,
+		SS_ACK      => SAVESTATE_PCM_ACK,
+
 		SL   			=> PCM_SL,
 		SR   			=> PCM_SR
 	);
 	
-	PCM_RAM : entity work.dpram 
+	PCM_RAM : entity work.dpram
 	generic map(16)
 	port map(
 		clock			=> CLK,
@@ -488,7 +595,9 @@ begin
 		wren_a		=> PCM_RAM_WE_A,
 		q_a			=> PCM_RAM_DI_A,
 
-		address_b	=> PCM_RAM_ADDR_B,
+		address_b	=> PCM_RAM_ADDR_B_I,
+		data_b		=> PCM_RAM_DO_B_I,
+		wren_b		=> PCM_RAM_WE_B_I,
 		q_b			=> PCM_RAM_DI_B
 	);
 	
@@ -502,10 +611,16 @@ begin
 		
 		CD_DI   		=> CDC_DATA,
 		CD_WR   		=> CDC_CDDA_WR,
-		
+
 		FD_DI   		=> ASIC_FD_DAT,
 		FD_WR   		=> ASIC_FD_WR,
-		
+		SS_REQ      => SAVESTATE_PAUSE and SAVESTATE_CDDA_REQ,
+		SS_WR       => SAVESTATE_CDDA_WR,
+		SS_ADDR     => SAVESTATE_CDDA_ADDR,
+		SS_DIN      => SAVESTATE_CDDA_DIN,
+		SS_DOUT     => SAVESTATE_CDDA_DOUT,
+		SS_ACK      => SAVESTATE_CDDA_ACK,
+
 		WR_READY		=> CDDA_WR_READY,
 		
 		SL   			=> CDDA_SL,

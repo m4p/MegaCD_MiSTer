@@ -322,7 +322,7 @@ end
 
 `include "build_id.v"
 localparam CONF_STR = {
-	"MegaCD;;",
+	"MegaCD;SS3E000000:200000;",
 	"S0,CUECHD,Insert Disk;",
 	"-;",
 	"h6O67,Region,Auto(JP),JP,US,EU;",
@@ -336,6 +336,10 @@ localparam CONF_STR = {
 	"D0RG,Reload Backup RAM;",
 	"D0RH,Save Backup RAM;",
 	"D0OD,Autosave,No,Yes;",
+	"O[63],Autoincrement Savestate Slot,Off,On;",
+	"O[62:61],Savestate Slot,1,2,3,4;",
+	"R1,Save State (Alt-F1);",
+	"R2,Restore State (F1);",
 	"-;",
 
 	"P1,Audio & Video;",
@@ -446,7 +450,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 	.new_vmode(new_vmode),
 
 	.status(status),
-	.status_in({status[63:8],2'b00,status[5:0]}),
+	.status_in({status[63:8],2'b00,status[5:3],2'b00,status[0]}),
 	.status_set(region_reset),
 	.status_menumask(status_menumask),
 
@@ -607,6 +611,115 @@ wire MCD_BANK23  = ~status[39] | ~dbg_menu;
 wire        dbg_pause_req;
 wire        dbg_pause_ack_gen;
 wire        dbg_pause_ack_mcd;
+wire        ss_pause_req;
+wire        ss_pause_ack_gen;
+wire        ss_pause_ack_mcd;
+wire        ss_busy;
+wire  [3:0] ss_valid_slots;
+wire        ss_save_req;
+wire        ss_load_req;
+wire  [1:0] ss_slot;
+wire  [7:0] ss_ddram_burstcnt;
+wire [28:0] ss_ddram_addr;
+wire [63:0] ss_ddram_din;
+wire  [7:0] ss_ddram_be;
+wire        ss_ddram_rd;
+wire        ss_ddram_we;
+localparam [3:0] SS_TARGET_NONE     = 4'd0;
+localparam [3:0] SS_TARGET_Z80RAM   = 4'd1;
+localparam [3:0] SS_TARGET_BRAM     = 4'd2;
+localparam [3:0] SS_TARGET_WORDRAM0 = 4'd3;
+localparam [3:0] SS_TARGET_WORDRAM1 = 4'd4;
+localparam [3:0] SS_TARGET_CDC_RAM  = 4'd5;
+localparam [3:0] SS_TARGET_PCM_RAM  = 4'd6;
+localparam [3:0] SS_TARGET_GENRAM   = 4'd7;
+localparam [3:0] SS_TARGET_PRGRAM   = 4'd8;
+localparam [3:0] SS_TARGET_VRAM     = 4'd9;
+
+wire        ss_ram_req;
+wire        ss_ram_wr;
+wire  [3:0] ss_ram_target;
+wire [17:0] ss_ram_addr;
+wire [15:0] ss_ram_din;
+wire [15:0] ss_ram_dout;
+wire        ss_ram_ack;
+
+wire  [7:0] ss_zram_dout;
+wire        ss_zram_ack;
+wire        ss_z80_state_req;
+wire        ss_z80_state_wr;
+wire  [2:0] ss_z80_state_addr;
+wire [31:0] ss_z80_state_din;
+wire [31:0] ss_z80_state_dout;
+wire        ss_z80_state_ack;
+wire        ss_main68k_state_req;
+wire        ss_main68k_state_wr;
+wire  [5:0] ss_main68k_state_addr;
+wire [31:0] ss_main68k_state_din;
+wire [31:0] ss_main68k_state_dout;
+wire        ss_main68k_state_ack;
+wire        ss_sub68k_state_req;
+wire        ss_sub68k_state_wr;
+wire  [5:0] ss_sub68k_state_addr;
+wire [31:0] ss_sub68k_state_din;
+wire [31:0] ss_sub68k_state_dout;
+wire        ss_sub68k_state_ack;
+wire        ss_vdp_state_req;
+wire        ss_vdp_state_wr;
+wire  [7:0] ss_vdp_state_addr;
+wire [15:0] ss_vdp_state_din;
+wire [15:0] ss_vdp_state_dout;
+wire        ss_vdp_state_ack;
+wire        ss_psg_state_req;
+wire        ss_psg_state_wr;
+wire  [2:0] ss_psg_state_addr;
+wire [31:0] ss_psg_state_din;
+wire [31:0] ss_psg_state_dout;
+wire        ss_psg_state_ack;
+wire        ss_fm_state_req;
+wire        ss_fm_state_wr;
+wire  [6:0] ss_fm_state_addr;
+wire [31:0] ss_fm_state_din;
+wire [31:0] ss_fm_state_dout;
+wire        ss_fm_state_ack;
+wire        ss_cdc_state_req;
+wire        ss_cdc_state_wr;
+wire  [3:0] ss_cdc_state_addr;
+wire [31:0] ss_cdc_state_din;
+wire [31:0] ss_cdc_state_dout;
+wire        ss_cdc_state_ack;
+wire        ss_pcm_state_req;
+wire        ss_pcm_state_wr;
+wire  [4:0] ss_pcm_state_addr;
+wire [31:0] ss_pcm_state_din;
+wire [31:0] ss_pcm_state_dout;
+wire        ss_pcm_state_ack;
+wire        ss_cdda_state_req;
+wire        ss_cdda_state_wr;
+wire [10:0] ss_cdda_state_addr;
+wire [31:0] ss_cdda_state_din;
+wire [31:0] ss_cdda_state_dout;
+wire        ss_cdda_state_ack;
+wire        ss_asic_state_req;
+wire        ss_asic_state_wr;
+wire  [5:0] ss_asic_state_addr;
+wire [31:0] ss_asic_state_din;
+wire [31:0] ss_asic_state_dout;
+wire        ss_asic_state_ack;
+wire        ss_topcd_state_req;
+wire        ss_topcd_state_wr;
+wire  [3:0] ss_topcd_state_addr;
+wire [31:0] ss_topcd_state_din;
+wire [31:0] ss_topcd_state_dout;
+wire        ss_topcd_state_ack;
+wire [15:0] ss_vram_dout;
+wire        ss_vram_ack;
+wire [15:0] ss_mcd_ram_dout;
+wire        ss_mcd_ram_ack;
+wire        ss_bram_req = ss_ram_req && (ss_ram_target == SS_TARGET_BRAM);
+wire [15:0] ss_bram_dout;
+wire        ss_bram_ack;
+reg   [3:0] ss_ram_target_d;
 
 wire        dbg_sdr_hold;
 wire        dbg_sdr_req;
@@ -618,6 +731,16 @@ wire [15:0] dbg_sdr_din;
 wire [15:0] dbg_sdr_dout;
 wire        dbg_sdr_busy;
 wire        dbg_sdr_grant;
+wire        ss_sdr_req = ss_ram_req && ((ss_ram_target == SS_TARGET_GENRAM) || (ss_ram_target == SS_TARGET_PRGRAM));
+wire [24:1] ss_sdr_addr = (ss_ram_target == SS_TARGET_GENRAM) ? {9'b010000000, ss_ram_addr[15:1]} :
+                                                             {(MCD_BANK23 ? 6'b100000 : 6'b011111), ss_ram_addr[17:0]};
+wire        ss_sdr_rd = ss_sdr_req && ~ss_ram_wr;
+wire        ss_sdr_wr = ss_sdr_req && ss_ram_wr;
+wire [15:0] ss_sdr_dout;
+reg         ss_sdr_busy_d;
+reg         ss_sdr_pending;
+reg         ss_sdr_ack_r;
+reg         ss_sdr_req_d;
 
 wire        dbg_bram_hold;
 wire        dbg_bram_req;
@@ -637,6 +760,20 @@ wire [15:0] dbg_word_dout;
 wire        dbg_word_ack;
 
 wire gg_available1;
+
+savestate_ui savestate_ui
+(
+	.clk(clk_sys),
+	.ps2_key(ps2_key[10:0]),
+	.allow_ss(~ioctl_download),
+	.status_slot(status[62:61]),
+	.autoincslot(status[63]),
+	.osd_saveload(status[2:1]),
+	.valid_slots(ss_valid_slots),
+	.ss_save(ss_save_req),
+	.ss_load(ss_load_req),
+	.selected_slot(ss_slot)
+);
 
 mcd_debug_bridge dbg_bridge
 (
@@ -683,12 +820,137 @@ mcd_debug_bridge dbg_bridge
 	.word_ack(dbg_word_ack)
 );
 
+mcd_savestates mcd_savestates
+(
+	.CLK(clk_sys),
+	.RST_N(~reset),
+	.SAVE_REQ(ss_save_req),
+	.LOAD_REQ(ss_load_req),
+	.SLOT(ss_slot),
+	.GEN_PAUSE_ACK(ss_pause_ack_gen),
+	.MCD_PAUSE_ACK(ss_pause_ack_mcd),
+	.PAUSE_REQ(ss_pause_req),
+	.BUSY(ss_busy),
+	.VALID_SLOTS(ss_valid_slots),
+	.RAM_REQ(ss_ram_req),
+	.RAM_WR(ss_ram_wr),
+	.RAM_TARGET(ss_ram_target),
+	.RAM_ADDR(ss_ram_addr),
+	.RAM_DIN(ss_ram_din),
+	.RAM_DOUT(ss_ram_dout),
+	.RAM_ACK(ss_ram_ack),
+	.Z80_REQ(ss_z80_state_req),
+	.Z80_WR(ss_z80_state_wr),
+	.Z80_ADDR(ss_z80_state_addr),
+	.Z80_DIN(ss_z80_state_din),
+	.Z80_DOUT(ss_z80_state_dout),
+	.Z80_ACK(ss_z80_state_ack),
+	.MAIN68K_REQ(ss_main68k_state_req),
+	.MAIN68K_WR(ss_main68k_state_wr),
+	.MAIN68K_ADDR(ss_main68k_state_addr),
+	.MAIN68K_DIN(ss_main68k_state_din),
+	.MAIN68K_DOUT(ss_main68k_state_dout),
+	.MAIN68K_ACK(ss_main68k_state_ack),
+	.SUB68K_REQ(ss_sub68k_state_req),
+	.SUB68K_WR(ss_sub68k_state_wr),
+	.SUB68K_ADDR(ss_sub68k_state_addr),
+	.SUB68K_DIN(ss_sub68k_state_din),
+	.SUB68K_DOUT(ss_sub68k_state_dout),
+	.SUB68K_ACK(ss_sub68k_state_ack),
+	.VDP_REQ(ss_vdp_state_req),
+	.VDP_WR(ss_vdp_state_wr),
+	.VDP_ADDR(ss_vdp_state_addr),
+	.VDP_DIN(ss_vdp_state_din),
+	.VDP_DOUT(ss_vdp_state_dout),
+	.VDP_ACK(ss_vdp_state_ack),
+	.PSG_REQ(ss_psg_state_req),
+	.PSG_WR(ss_psg_state_wr),
+	.PSG_ADDR(ss_psg_state_addr),
+	.PSG_DIN(ss_psg_state_din),
+	.PSG_DOUT(ss_psg_state_dout),
+	.PSG_ACK(ss_psg_state_ack),
+	.FM_REQ(ss_fm_state_req),
+	.FM_WR(ss_fm_state_wr),
+	.FM_ADDR(ss_fm_state_addr),
+	.FM_DIN(ss_fm_state_din),
+	.FM_DOUT(ss_fm_state_dout),
+	.FM_ACK(ss_fm_state_ack),
+	.CDC_REQ(ss_cdc_state_req),
+	.CDC_WR(ss_cdc_state_wr),
+	.CDC_ADDR(ss_cdc_state_addr),
+	.CDC_DIN(ss_cdc_state_din),
+	.CDC_DOUT(ss_cdc_state_dout),
+	.CDC_ACK(ss_cdc_state_ack),
+	.PCM_REQ(ss_pcm_state_req),
+	.PCM_WR(ss_pcm_state_wr),
+	.PCM_ADDR(ss_pcm_state_addr),
+	.PCM_DIN(ss_pcm_state_din),
+	.PCM_DOUT(ss_pcm_state_dout),
+	.PCM_ACK(ss_pcm_state_ack),
+	.CDDA_REQ(ss_cdda_state_req),
+	.CDDA_WR(ss_cdda_state_wr),
+	.CDDA_ADDR(ss_cdda_state_addr),
+	.CDDA_DIN(ss_cdda_state_din),
+	.CDDA_DOUT(ss_cdda_state_dout),
+	.CDDA_ACK(ss_cdda_state_ack),
+	.ASIC_REQ(ss_asic_state_req),
+	.ASIC_WR(ss_asic_state_wr),
+	.ASIC_ADDR(ss_asic_state_addr),
+	.ASIC_DIN(ss_asic_state_din),
+	.ASIC_DOUT(ss_asic_state_dout),
+	.ASIC_ACK(ss_asic_state_ack),
+	.TOP_REQ(ss_topcd_state_req),
+	.TOP_WR(ss_topcd_state_wr),
+	.TOP_ADDR(ss_topcd_state_addr),
+	.TOP_DIN(ss_topcd_state_din),
+	.TOP_DOUT(ss_topcd_state_dout),
+	.TOP_ACK(ss_topcd_state_ack),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_BURSTCNT(ss_ddram_burstcnt),
+	.DDRAM_ADDR(ss_ddram_addr),
+	.DDRAM_DIN(ss_ddram_din),
+	.DDRAM_BE(ss_ddram_be),
+	.DDRAM_RD(ss_ddram_rd),
+	.DDRAM_WE(ss_ddram_we)
+);
+
 gen gen
 (
 	.RESET_N(~reset),
 	.MCLK(clk_sys),
 	.PAUSE_REQ(dbg_pause_req),
-	
+	.SS_PAUSE_REQ(ss_pause_req),
+	.SS_RAM_REQ(ss_ram_req && (ss_ram_target == SS_TARGET_Z80RAM)),
+	.SS_RAM_WR(ss_ram_wr),
+	.SS_RAM_ADDR(ss_ram_addr[12:0]),
+	.SS_RAM_DIN(ss_ram_din[7:0]),
+	.SS_VRAM_REQ(ss_ram_req && (ss_ram_target == SS_TARGET_VRAM)),
+	.SS_VRAM_WR(ss_ram_wr),
+	.SS_VRAM_ADDR(ss_ram_addr[15:1]),
+	.SS_VRAM_DIN(ss_ram_din),
+	.SS_Z80_REQ(ss_z80_state_req),
+	.SS_Z80_WR(ss_z80_state_wr),
+	.SS_Z80_ADDR(ss_z80_state_addr),
+	.SS_Z80_DIN(ss_z80_state_din),
+	.SS_M68K_REQ(ss_main68k_state_req),
+	.SS_M68K_WR(ss_main68k_state_wr),
+	.SS_M68K_ADDR(ss_main68k_state_addr),
+	.SS_M68K_DIN(ss_main68k_state_din),
+	.SS_VDP_REQ(ss_vdp_state_req),
+	.SS_VDP_WR(ss_vdp_state_wr),
+	.SS_VDP_ADDR(ss_vdp_state_addr),
+	.SS_VDP_DIN(ss_vdp_state_din),
+	.SS_PSG_REQ(ss_psg_state_req),
+	.SS_PSG_WR(ss_psg_state_wr),
+	.SS_PSG_ADDR(ss_psg_state_addr),
+	.SS_PSG_DIN(ss_psg_state_din),
+	.SS_FM_REQ(ss_fm_state_req),
+	.SS_FM_WR(ss_fm_state_wr),
+	.SS_FM_ADDR(ss_fm_state_addr),
+	.SS_FM_DIN(ss_fm_state_din),
+
 	.VA(GEN_VA),
 	.VDI(GEN_VDI),
 	.VDO(GEN_VDO),
@@ -781,7 +1043,22 @@ gen gen
 	.GG_EN(status[24]),
 	.GG_CODE({~gg_code[95] & gg_code[128], gg_code[127:0]}),
 	.GG_AVAILABLE(gg_available1),
-	.PAUSE_ACK(dbg_pause_ack_gen)
+	.SS_RAM_DOUT(ss_zram_dout),
+	.SS_RAM_ACK(ss_zram_ack),
+	.SS_VRAM_DOUT(ss_vram_dout),
+	.SS_VRAM_ACK(ss_vram_ack),
+	.SS_Z80_DOUT(ss_z80_state_dout),
+	.SS_Z80_ACK(ss_z80_state_ack),
+	.SS_M68K_DOUT(ss_main68k_state_dout),
+	.SS_M68K_ACK(ss_main68k_state_ack),
+	.SS_VDP_DOUT(ss_vdp_state_dout),
+	.SS_VDP_ACK(ss_vdp_state_ack),
+	.SS_PSG_DOUT(ss_psg_state_dout),
+	.SS_PSG_ACK(ss_psg_state_ack),
+	.SS_FM_DOUT(ss_fm_state_dout),
+	.SS_FM_ACK(ss_fm_state_ack),
+	.PAUSE_ACK(dbg_pause_ack_gen),
+	.SS_PAUSE_ACK(ss_pause_ack_gen)
 );
 
 wire TRANSP_DETECT;
@@ -896,6 +1173,45 @@ MCD MCD
 
 	.DEBUG_PAUSE(dbg_pause_req & dbg_pause_ack_mcd),
 	.DEBUG_IDLE(dbg_pause_ack_mcd),
+	.SAVESTATE_PAUSE(ss_pause_req & ss_pause_ack_mcd),
+	.SAVESTATE_IDLE(ss_pause_ack_mcd),
+	.SAVESTATE_RAM_REQ(ss_ram_req),
+	.SAVESTATE_RAM_WR(ss_ram_wr),
+	.SAVESTATE_RAM_TARGET(ss_ram_target),
+	.SAVESTATE_RAM_ADDR(ss_ram_addr),
+	.SAVESTATE_RAM_DIN(ss_ram_din),
+	.SAVESTATE_RAM_DOUT(ss_mcd_ram_dout),
+	.SAVESTATE_RAM_ACK(ss_mcd_ram_ack),
+		.SAVESTATE_CPU_REQ(ss_sub68k_state_req),
+		.SAVESTATE_CPU_WR(ss_sub68k_state_wr),
+	.SAVESTATE_CPU_ADDR(ss_sub68k_state_addr),
+	.SAVESTATE_CPU_DIN(ss_sub68k_state_din),
+	.SAVESTATE_CPU_DOUT(ss_sub68k_state_dout),
+	.SAVESTATE_CPU_ACK(ss_sub68k_state_ack),
+	.SAVESTATE_CDC_REQ(ss_cdc_state_req),
+	.SAVESTATE_CDC_WR(ss_cdc_state_wr),
+	.SAVESTATE_CDC_ADDR(ss_cdc_state_addr),
+	.SAVESTATE_CDC_DIN(ss_cdc_state_din),
+	.SAVESTATE_CDC_DOUT(ss_cdc_state_dout),
+	.SAVESTATE_CDC_ACK(ss_cdc_state_ack),
+	.SAVESTATE_PCM_REQ(ss_pcm_state_req),
+	.SAVESTATE_PCM_WR(ss_pcm_state_wr),
+	.SAVESTATE_PCM_ADDR(ss_pcm_state_addr),
+	.SAVESTATE_PCM_DIN(ss_pcm_state_din),
+	.SAVESTATE_PCM_DOUT(ss_pcm_state_dout),
+	.SAVESTATE_PCM_ACK(ss_pcm_state_ack),
+	.SAVESTATE_CDDA_REQ(ss_cdda_state_req),
+	.SAVESTATE_CDDA_WR(ss_cdda_state_wr),
+	.SAVESTATE_CDDA_ADDR(ss_cdda_state_addr),
+	.SAVESTATE_CDDA_DIN(ss_cdda_state_din),
+	.SAVESTATE_CDDA_DOUT(ss_cdda_state_dout),
+	.SAVESTATE_CDDA_ACK(ss_cdda_state_ack),
+	.SAVESTATE_ASIC_REQ(ss_asic_state_req),
+	.SAVESTATE_ASIC_WR(ss_asic_state_wr),
+	.SAVESTATE_ASIC_ADDR(ss_asic_state_addr),
+	.SAVESTATE_ASIC_DIN(ss_asic_state_din),
+	.SAVESTATE_ASIC_DOUT(ss_asic_state_dout),
+	.SAVESTATE_ASIC_ACK(ss_asic_state_ack),
 	.DEBUG_WORD_REQ(dbg_word_req),
 	.DEBUG_WORD_WE(dbg_word_we),
 	.DEBUG_WORD_BANK(dbg_word_bank),
@@ -1014,11 +1330,34 @@ assign MCD_PRG_DI   = use_sdr ? sdr_do   : ddr_do;
 
 wire ddr_busy;
 wire [15:0] ddr_do;
-assign DDRAM_CLK = clk_ram & ~use_sdr;
+wire        ddram_core_clk = clk_ram & ~use_sdr;
+wire  [7:0] ddram_core_burstcnt;
+wire [28:0] ddram_core_addr;
+wire [63:0] ddram_core_din;
+wire  [7:0] ddram_core_be;
+wire        ddram_core_rd;
+wire        ddram_core_we;
+
+assign DDRAM_CLK = use_sdr ? clk_sys : ddram_core_clk;
+assign DDRAM_BURSTCNT = use_sdr ? ss_ddram_burstcnt : ddram_core_burstcnt;
+assign DDRAM_ADDR = use_sdr ? ss_ddram_addr : ddram_core_addr;
+assign DDRAM_DIN = use_sdr ? ss_ddram_din : ddram_core_din;
+assign DDRAM_BE = use_sdr ? ss_ddram_be : ddram_core_be;
+assign DDRAM_RD = use_sdr ? ss_ddram_rd : ddram_core_rd;
+assign DDRAM_WE = use_sdr ? ss_ddram_we : ddram_core_we;
+
 ddram ddram
 (
-	.*,
-
+	.DDRAM_CLK(ddram_core_clk),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(ddram_core_burstcnt),
+	.DDRAM_ADDR(ddram_core_addr),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(ddram_core_rd),
+	.DDRAM_DIN(ddram_core_din),
+	.DDRAM_BE(ddram_core_be),
+	.DDRAM_WE(ddram_core_we),
 	.cache_rst(reset),
 
 	.mem_addr(MCD_PRG_ADDR),
@@ -1034,14 +1373,16 @@ ddram ddram
 //MCD PRGRAM, GEN ROM/RAM/CART RAM
 wire sdr_busy;
 wire [15:0] sdr_do;
-wire [24:1] sdr_addr2 = dbg_sdr_hold ? dbg_sdr_addr :
+wire [24:1] sdr_addr2 = ss_sdr_req ? ss_sdr_addr :
+							 dbg_sdr_hold ? dbg_sdr_addr :
 							 (rom_download ? (rom_cart_mode ? {2'b00,ioctl_addr[22:1]} : {6'b011110,ioctl_addr[18:1]}) :
 							                {5'b01110,tmpram_lba[9:0],tmpram_addr});
-wire [15:0] sdr_din2 = dbg_sdr_hold ? dbg_sdr_din :
+wire [15:0] sdr_din2 = ss_sdr_req ? ss_ram_din :
+							 dbg_sdr_hold ? dbg_sdr_din :
 							 (rom_download ? {ioctl_data[7:0],ioctl_data[15:8]} : {tmpram_dout,tmpram_dout});
-wire        sdr_rd2 = dbg_sdr_hold ? dbg_sdr_rd : (~rom_download & tmpram_req & ~bk_loading);
-wire        sdr_wrl2 = dbg_sdr_hold ? dbg_sdr_wrl : (rom_download ? ioctl_wait : (tmpram_req & bk_loading));
-wire        sdr_wrh2 = dbg_sdr_hold ? dbg_sdr_wrh : (rom_download ? ioctl_wait : (tmpram_req & bk_loading));
+wire        sdr_rd2 = ss_sdr_req ? ss_sdr_rd : (dbg_sdr_hold ? dbg_sdr_rd : (~rom_download & tmpram_req & ~bk_loading));
+wire        sdr_wrl2 = ss_sdr_req ? ss_sdr_wr : (dbg_sdr_hold ? dbg_sdr_wrl : (rom_download ? ioctl_wait : (tmpram_req & bk_loading)));
+wire        sdr_wrh2 = ss_sdr_req ? ss_sdr_wr : (dbg_sdr_hold ? dbg_sdr_wrh : (rom_download ? ioctl_wait : (tmpram_req & bk_loading)));
 wire [15:0] sdr_port2_dout;
 wire        sdr_port2_busy;
 sdram sdram
@@ -1082,6 +1423,7 @@ sdram sdram
 );
 
 wire [15:0] bram_portb_q;
+assign ss_bram_dout = bram_portb_q;
 assign dbg_bram_dout = bram_portb_q;
 dpram_dif #(13,8,12,16) bram
 (
@@ -1091,22 +1433,67 @@ dpram_dif #(13,8,12,16) bram
 	.wren_a(PIER_QUIRK ? m95_we : MCD_BRAM_WE),
 	.q_a(MCD_BRAM_DI),
 
-	.address_b(dbg_bram_hold ? dbg_bram_addr : {sd_lba[0][3:0],sd_buff_addr}),
-	.data_b(dbg_bram_hold ? dbg_bram_din : sd_buff_dout),
-	.wren_b(dbg_bram_hold ? dbg_bram_we : (sd_buff_wr & sd_ack & !sd_lba[0][10:4])),
+	.address_b(ss_bram_req ? ss_ram_addr[11:0] : (dbg_bram_hold ? dbg_bram_addr : {sd_lba[0][3:0],sd_buff_addr})),
+	.data_b(ss_bram_req ? ss_ram_din : (dbg_bram_hold ? dbg_bram_din : sd_buff_dout)),
+	.wren_b(ss_bram_req ? ss_ram_wr : (dbg_bram_hold ? dbg_bram_we : (sd_buff_wr & sd_ack & !sd_lba[0][10:4]))),
 	.q_b(bram_portb_q)
 );
 
 wire [15:0] bram_sd_buff_data = bram_portb_q;
 reg dbg_bram_ack_r;
-always @(posedge clk_sys) dbg_bram_ack_r <= dbg_bram_req;
+reg ss_bram_ack_r;
+always @(posedge clk_sys) begin
+	if(reset) begin
+		ss_sdr_busy_d <= 1'b0;
+		ss_sdr_pending <= 1'b0;
+		ss_sdr_ack_r <= 1'b0;
+		ss_sdr_req_d <= 1'b0;
+		dbg_bram_ack_r <= 1'b0;
+		ss_bram_ack_r <= 1'b0;
+		ss_ram_target_d <= SS_TARGET_NONE;
+	end else begin
+		ss_sdr_busy_d <= sdr_port2_busy;
+		ss_sdr_req_d <= ss_sdr_req;
+		ss_sdr_ack_r <= 1'b0;
+		if (ss_sdr_req && !ss_sdr_req_d) ss_sdr_pending <= 1'b1;
+		if (ss_sdr_pending && ss_sdr_busy_d && !sdr_port2_busy) begin
+			ss_sdr_ack_r <= 1'b1;
+			ss_sdr_pending <= 1'b0;
+		end
+		dbg_bram_ack_r <= dbg_bram_req;
+		ss_bram_ack_r <= ss_bram_req;
+		if(ss_ram_req) ss_ram_target_d <= ss_ram_target;
+	end
+end
 assign dbg_bram_ack = dbg_bram_ack_r;
+assign ss_bram_ack = ss_bram_ack_r;
+assign ss_ram_dout = (ss_ram_target_d == SS_TARGET_Z80RAM)   ? {8'h00, ss_zram_dout} :
+                     (ss_ram_target_d == SS_TARGET_BRAM)     ? ss_bram_dout :
+                     (ss_ram_target_d == SS_TARGET_WORDRAM0) ? ss_mcd_ram_dout :
+                     (ss_ram_target_d == SS_TARGET_WORDRAM1) ? ss_mcd_ram_dout :
+                     (ss_ram_target_d == SS_TARGET_CDC_RAM)  ? ss_mcd_ram_dout :
+                     (ss_ram_target_d == SS_TARGET_PCM_RAM)  ? ss_mcd_ram_dout :
+                     (ss_ram_target_d == SS_TARGET_GENRAM)   ? ss_sdr_dout :
+                     (ss_ram_target_d == SS_TARGET_PRGRAM)   ? ss_sdr_dout :
+                     (ss_ram_target_d == SS_TARGET_VRAM)     ? ss_vram_dout :
+                                                                16'h0000;
+assign ss_ram_ack = (ss_ram_target_d == SS_TARGET_Z80RAM)   ? ss_zram_ack :
+                    (ss_ram_target_d == SS_TARGET_BRAM)     ? ss_bram_ack :
+                    (ss_ram_target_d == SS_TARGET_WORDRAM0) ? ss_mcd_ram_ack :
+                    (ss_ram_target_d == SS_TARGET_WORDRAM1) ? ss_mcd_ram_ack :
+                    (ss_ram_target_d == SS_TARGET_CDC_RAM)  ? ss_mcd_ram_ack :
+                    (ss_ram_target_d == SS_TARGET_PCM_RAM)  ? ss_mcd_ram_ack :
+                    (ss_ram_target_d == SS_TARGET_GENRAM)   ? ss_sdr_ack_r :
+                    (ss_ram_target_d == SS_TARGET_PRGRAM)   ? ss_sdr_ack_r :
+                    (ss_ram_target_d == SS_TARGET_VRAM)     ? ss_vram_ack :
+                                                               1'b0;
 
 wire [7:0] tmpram_dout;
 wire [7:0] tmpram_din = sdr_port2_dout[7:0];
 wire       tmpram_busy = dbg_sdr_hold ? 1'b0 : sdr_port2_busy;
 assign dbg_sdr_dout = sdr_port2_dout;
 assign dbg_sdr_busy = sdr_port2_busy;
+assign ss_sdr_dout = sdr_port2_dout;
 
 wire [15:0] tmpram_sd_buff_data;
 dpram_dif #(9,8,8,16) tmpram
@@ -1131,7 +1518,7 @@ reg tmpram_tx_finish;
 reg tmpram_req;
 reg tmpram_busy_d;
 assign dbg_bram_grant = ~(sd_rd[0] | sd_wr[0] | sd_buff_wr | tmpram_tx_start);
-assign dbg_sdr_grant = ~rom_download & ~tmpram_req & ~tmpram_tx_start;
+assign dbg_sdr_grant = ~ss_sdr_req & ~rom_download & ~tmpram_req & ~tmpram_tx_start;
 always @(posedge clk_sys) begin
 	reg state;
 
@@ -1164,37 +1551,55 @@ reg scd_cdd_dm;
 wire [39:0] scd_cdd_comm;
 wire scd_cdd_send;
 reg scd_cdd_rec;
+reg cd_out48_last = 1'b1;
+reg scd_cdd_send_old = 1'b0;
+reg [2:0] scd_cdd_rec_cnt = 3'd0;
+reg rst_old = 1'b0;
 
 always @(posedge clk_sys) begin
-	reg cd_out48_last = 1;
-	reg scd_cdd_send_old = 0;
-	reg [2:0] cnt = 0;
-	reg rst_old = 0;
-	
-	if (cd_out[48] != cd_out48_last)  begin
-		cd_out48_last <= cd_out[48];
-		scd_cdd_stat <= cd_out[39:0];
-		scd_cdd_dm <= cd_out[40];
-		scd_cdd_rec <= 1;
-		cnt <= 7;
+	if (ss_topcd_state_req && ss_topcd_state_wr) begin
+		case (ss_topcd_state_addr)
+			4'd0: cd_in[31:0] <= ss_topcd_state_din;
+			4'd1: begin
+				cd_in[48:32] <= ss_topcd_state_din[16:0];
+				scd_cdd_dm <= ss_topcd_state_din[17];
+				scd_cdd_rec <= ss_topcd_state_din[18];
+				cd_out48_last <= ss_topcd_state_din[19];
+				scd_cdd_send_old <= ss_topcd_state_din[20];
+				rst_old <= ss_topcd_state_din[21];
+				scd_cdd_rec_cnt <= ss_topcd_state_din[24:22];
+			end
+			4'd2: scd_cdd_stat[31:0] <= ss_topcd_state_din;
+			4'd3: scd_cdd_stat[39:32] <= ss_topcd_state_din[7:0];
+			default: ;
+		endcase
 	end
-	else if (cnt) begin
-		cnt <= cnt - 1'd1;
-	end
-	else begin
-		scd_cdd_rec <= 0;
-	end
-	
-	scd_cdd_send_old <= scd_cdd_send;
-	if (scd_cdd_send && !scd_cdd_send_old) begin
-		cd_in[47:0] <= {8'h00,scd_cdd_comm};
-		cd_in[48] <= ~cd_in[48];
-	end
-	else begin
-		rst_old <= MCD_RST_N;
-		if (rst_old & ~MCD_RST_N) begin
-			cd_in[47:0] <= 8'hFF;
+	else if (!ss_pause_req) begin
+		if (cd_out[48] != cd_out48_last)  begin
+			cd_out48_last <= cd_out[48];
+			scd_cdd_stat <= cd_out[39:0];
+			scd_cdd_dm <= cd_out[40];
+			scd_cdd_rec <= 1;
+			scd_cdd_rec_cnt <= 3'd7;
+		end
+		else if (scd_cdd_rec_cnt) begin
+			scd_cdd_rec_cnt <= scd_cdd_rec_cnt - 1'd1;
+		end
+		else begin
+			scd_cdd_rec <= 0;
+		end
+
+		scd_cdd_send_old <= scd_cdd_send;
+		if (scd_cdd_send && !scd_cdd_send_old) begin
+			cd_in[47:0] <= {8'h00,scd_cdd_comm};
 			cd_in[48] <= ~cd_in[48];
+		end
+		else begin
+			rst_old <= MCD_RST_N;
+			if (rst_old & ~MCD_RST_N) begin
+				cd_in[47:0] <= 8'hFF;
+				cd_in[48] <= ~cd_in[48];
+			end
 		end
 	end
 end
@@ -1203,21 +1608,45 @@ end
 //extend cdc_wr for 8 cycles
 reg  cdc_wr;
 reg [15:0] cdc_d;
+reg  [2:0] cdc_wr_cnt = 3'd0;
 always @(posedge clk_sys) begin
-	reg [2:0] cnt = 0;
-
-	if (ioctl_wr) begin
-		cnt <= 7;
-		cdc_wr <= 1;
-		cdc_d <= ioctl_data;
+	if (ss_topcd_state_req && ss_topcd_state_wr && (ss_topcd_state_addr == 4'd3)) begin
+		cdc_wr <= ss_topcd_state_din[8];
+		cdc_wr_cnt <= ss_topcd_state_din[11:9];
+		cdc_d <= ss_topcd_state_din[27:12];
 	end
-	else if (cnt) begin
-		cnt <= cnt - 1'd1;
-	end
-	else begin
-		cdc_wr <= 0;
+	else if (!ss_pause_req) begin
+		if (ioctl_wr) begin
+			cdc_wr_cnt <= 3'd7;
+			cdc_wr <= 1;
+			cdc_d <= ioctl_data;
+		end
+		else if (cdc_wr_cnt) begin
+			cdc_wr_cnt <= cdc_wr_cnt - 1'd1;
+		end
+		else begin
+			cdc_wr <= 0;
+		end
 	end
 end
+
+reg        ss_topcd_state_ack_r;
+reg [31:0] ss_topcd_state_dout_r;
+always @(posedge clk_sys) begin
+	ss_topcd_state_ack_r <= ss_topcd_state_req;
+	if (ss_topcd_state_req) begin
+		case (ss_topcd_state_addr)
+			4'd0: ss_topcd_state_dout_r <= cd_in[31:0];
+			4'd1: ss_topcd_state_dout_r <= {7'd0, scd_cdd_rec_cnt, rst_old, scd_cdd_send_old, cd_out48_last, scd_cdd_rec, scd_cdd_dm, cd_in[48:32]};
+			4'd2: ss_topcd_state_dout_r <= scd_cdd_stat[31:0];
+			4'd3: ss_topcd_state_dout_r <= {4'd0, cdc_wr_cnt, cdc_wr, cdc_d, scd_cdd_stat[39:32]};
+			default: ss_topcd_state_dout_r <= 32'h00000000;
+		endcase
+	end
+end
+
+assign ss_topcd_state_dout = ss_topcd_state_dout_r;
+assign ss_topcd_state_ack = ss_topcd_state_ack_r;
 
 
 /////////////////////////////////////////////////////////////

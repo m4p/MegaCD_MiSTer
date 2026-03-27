@@ -31,10 +31,11 @@ http://gendev.spritesmind.net/forum/viewtopic.php?t=386&postdays=0&postorder=asc
 
 */
 
-module jt12_pg(
+module jt12_pg #(parameter num_ch=6)(
     input               clk,
     input               clk_en /* synthesis direct_enable */,
     input               rst,
+    input               ss_apply,
     // Channel frequency
     input       [10:0]  fnum_I,
     input       [ 2:0]  block_I,
@@ -50,10 +51,13 @@ module jt12_pg(
     input               pg_stop,    // not implemented
     
     output  reg [ 4:0]  keycode_II,
-    output      [ 9:0]  phase_VIII
+    output      [ 9:0]  phase_VIII,
+    input  [((20*(4*num_ch)) + 60 + 28)-1:0] ss_state_in,
+    output [((20*(4*num_ch)) + 60 + 28)-1:0] ss_state_out
 );
-
-parameter num_ch=6;
+localparam integer PG_SS_PHASE_BITS = 20*(4*num_ch);
+localparam integer PG_SS_PAD_BITS = 60;
+localparam integer PG_SS_LOCAL_LSB = PG_SS_PHASE_BITS + PG_SS_PAD_BITS;
 
 wire [4:0] keycode_I;
 wire signed [5:0] detune_mod_I;
@@ -62,12 +66,19 @@ wire [16:0] phinc_I;
 reg  [16:0] phinc_II;
 wire [19:0] phase_drop, phase_in;
 wire [ 9:0] phase_II;
+wire [PG_SS_PHASE_BITS-1:0] ss_phsh_state_out;
+wire [PG_SS_PAD_BITS-1:0] ss_pad_state_out;
 
-always @(posedge clk) if(clk_en) begin
-    keycode_II      <= keycode_I;
-    detune_mod_II   <= detune_mod_I;
-    phinc_II        <= phinc_I;
-end
+always @(posedge clk)
+    if(ss_apply) begin
+        keycode_II <= ss_state_in[PG_SS_LOCAL_LSB+4:PG_SS_LOCAL_LSB];
+        detune_mod_II <= ss_state_in[PG_SS_LOCAL_LSB+10:PG_SS_LOCAL_LSB+5];
+        phinc_II <= ss_state_in[PG_SS_LOCAL_LSB+27:PG_SS_LOCAL_LSB+11];
+    end else if(clk_en) begin
+        keycode_II      <= keycode_I;
+        detune_mod_II   <= detune_mod_I;
+        phinc_II        <= phinc_I;
+    end
 
 jt12_pg_comb u_comb(
     .block      ( block_I       ),
@@ -97,7 +108,10 @@ jt12_sh_rst #( .width(20), .stages(4*num_ch) ) u_phsh(
     .clk    ( clk       ),
     .clk_en ( clk_en    ),
     .rst    ( rst       ),
+    .ss_apply( ss_apply ),
     .din    ( phase_in  ),
+    .ss_state_in( ss_state_in[PG_SS_PHASE_BITS-1:0] ),
+    .ss_state_out( ss_phsh_state_out ),
     .drop   ( phase_drop)
 );
 
@@ -105,9 +119,17 @@ jt12_sh_rst #( .width(10), .stages(6) ) u_pad(
     .clk    ( clk       ),
     .clk_en ( clk_en    ),
     .rst    ( rst       ),  
+    .ss_apply( ss_apply ),
     .din    ( phase_II  ),
+    .ss_state_in( ss_state_in[PG_SS_PHASE_BITS + PG_SS_PAD_BITS - 1:PG_SS_PHASE_BITS] ),
+    .ss_state_out( ss_pad_state_out ),
     .drop   ( phase_VIII)
 );
 
-endmodule
+assign ss_state_out[PG_SS_PHASE_BITS-1:0] = ss_phsh_state_out;
+assign ss_state_out[PG_SS_PHASE_BITS + PG_SS_PAD_BITS - 1:PG_SS_PHASE_BITS] = ss_pad_state_out;
+assign ss_state_out[PG_SS_LOCAL_LSB+4:PG_SS_LOCAL_LSB] = keycode_II;
+assign ss_state_out[PG_SS_LOCAL_LSB+10:PG_SS_LOCAL_LSB+5] = detune_mod_II;
+assign ss_state_out[PG_SS_LOCAL_LSB+27:PG_SS_LOCAL_LSB+11] = phinc_II;
 
+endmodule

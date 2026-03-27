@@ -38,7 +38,36 @@ module gen
 	input         RESET_N,
 	input         MCLK,
 	input         PAUSE_REQ,
-	
+	input         SS_PAUSE_REQ,
+	input         SS_RAM_REQ,
+	input         SS_RAM_WR,
+	input  [12:0] SS_RAM_ADDR,
+	input   [7:0] SS_RAM_DIN,
+	input         SS_VRAM_REQ,
+	input         SS_VRAM_WR,
+	input  [15:1] SS_VRAM_ADDR,
+	input  [15:0] SS_VRAM_DIN,
+	input         SS_Z80_REQ,
+	input         SS_Z80_WR,
+	input   [2:0] SS_Z80_ADDR,
+	input  [31:0] SS_Z80_DIN,
+	input         SS_M68K_REQ,
+	input         SS_M68K_WR,
+	input   [5:0] SS_M68K_ADDR,
+	input  [31:0] SS_M68K_DIN,
+	input         SS_VDP_REQ,
+	input         SS_VDP_WR,
+	input   [7:0] SS_VDP_ADDR,
+	input  [15:0] SS_VDP_DIN,
+	input         SS_PSG_REQ,
+	input         SS_PSG_WR,
+	input   [2:0] SS_PSG_ADDR,
+	input  [31:0] SS_PSG_DIN,
+	input         SS_FM_REQ,
+	input         SS_FM_WR,
+	input   [6:0] SS_FM_ADDR,
+	input  [31:0] SS_FM_DIN,
+
 	output [23:1] VA,
 	input  [15:0] VDI,
 	output [15:0] VDO,
@@ -58,7 +87,7 @@ module gen
 	output        FDC_N,
 	input         CART_N,
 	input         DISK_N,
-	
+
 	input   [1:0] LPF_MODE,
 	input         ENABLE_FM,
 	input         ENABLE_PSG,
@@ -74,7 +103,7 @@ module gen
 	input         LOADING,
 	input         PAL,
 	input         EXPORT,
-	
+
 	output        TIME_N,
 	input  [15:0] TIME_DI,
 
@@ -97,7 +126,7 @@ module gen
 	output        INTERLACE,
 	output        FIELD,
 	output  [1:0] RESOLUTION,
-	
+
 	input         EN_BGA,
 	input         EN_BGB,
 	input         EN_SPR,
@@ -112,7 +141,7 @@ module gen
 
 	input  [24:0] MOUSE,
 	input   [2:0] MOUSE_OPT,
-	
+
 	input         GUN_OPT,
 	input         GUN_TYPE,
 	input         GUN_SENSOR,
@@ -135,10 +164,25 @@ module gen
 	input         GG_EN,
 	input [128:0] GG_CODE,
 	output        GG_AVAILABLE,
+	output  [7:0] SS_RAM_DOUT,
+	output        SS_RAM_ACK,
+	output [15:0] SS_VRAM_DOUT,
+	output        SS_VRAM_ACK,
+	output reg [31:0] SS_Z80_DOUT,
+	output        SS_Z80_ACK,
+	output [31:0] SS_M68K_DOUT,
+	output        SS_M68K_ACK,
+	output [15:0] SS_VDP_DOUT,
+	output        SS_VDP_ACK,
+	output [31:0] SS_PSG_DOUT,
+	output        SS_PSG_ACK,
+	output [31:0] SS_FM_DOUT,
+	output        SS_FM_ACK,
 
 	output [23:0] DBG_M68K_A,
 	output [23:0] DBG_MBUS_A,
-	output        PAUSE_ACK
+	output        PAUSE_ACK,
+	output        SS_PAUSE_ACK
 );
 
 reg reset;
@@ -154,6 +198,7 @@ wire M68K_CLKEN = M68K_CLKENp;
 reg  M68K_CLKENp, M68K_CLKENn;
 reg  Z80_CLKENp, Z80_CLKENn;
 reg  pause_latched;
+wire pause_req_any = PAUSE_REQ | SS_PAUSE_REQ;
 
 always @(negedge MCLK) begin
 	reg [3:0] VCLKCNT = 0;
@@ -185,14 +230,14 @@ always @(negedge MCLK) begin
 		if (VCLKCNT == 4'd3) begin
 			M68K_CLKENn <= 1;
 		end
-		
+
 		Z80_CLKENn <= 0;
 		ZCLKCNT <= ZCLKCNT + 1'b1;
 		if (ZCLKCNT == 14) begin
 			ZCLKCNT <= 0;
 			Z80_CLKENn <= 1;
 		end
-		
+
 		Z80_CLKENp <= 0;
 		if (ZCLKCNT == 7) begin
 			Z80_CLKENp <= 1;
@@ -224,7 +269,7 @@ reg   [2:0] M68K_IPL_N;
 always @(posedge MCLK) begin
 	reg       old_as;
 	reg [1:0] scnt;
-	
+
 	if(reset) begin
 		M68K_IPL_N <= 3'b111;
 	end
@@ -276,6 +321,12 @@ fx68k M68K
 	.IPL0n(M68K_IPL_N[0]),
 	.IPL1n(M68K_IPL_N[1]),
 	.IPL2n(M68K_IPL_N[2]),
+	.SS_REQ(pause_latched & SS_M68K_REQ),
+	.SS_WR(SS_M68K_WR),
+	.SS_ADDR(SS_M68K_ADDR),
+	.SS_DIN(SS_M68K_DIN),
+	.SS_DOUT(SS_M68K_DOUT),
+	.SS_ACK(SS_M68K_ACK),
 	.iEdb(genie_data),
 	.oEdb(M68K_DO),
 	.eab(M68K_A)
@@ -325,6 +376,10 @@ wire [15:0] vram_q1, vram_q2;
 wire        vram32_req;
 wire [15:1] vram32_a;
 wire [31:0] vram32_q;
+wire [13:0] vram_portb_addr = LOADING ? ram_rst_a[14:1] : (pause_latched & SS_VRAM_REQ ? SS_VRAM_ADDR[15:2] : vram32_a[15:2]);
+wire        vram_ss_word1 = SS_VRAM_ADDR[1];
+reg         ss_vram_req_d;
+reg         ss_vram_word1_d;
 
 dpram #(14) vram_l1
 (
@@ -334,8 +389,9 @@ dpram #(14) vram_l1
 	.wren_a(vram_we_l & (vram_ack ^ vram_req) & ~vram_a[1]),
 	.q_a(vram_q1[7:0]),
 
-	.address_b(LOADING ? ram_rst_a[14:1] : vram32_a[15:2]),
-	.wren_b(LOADING),
+	.address_b(vram_portb_addr),
+	.data_b(SS_VRAM_DIN[7:0]),
+	.wren_b(LOADING | (pause_latched & SS_VRAM_REQ & SS_VRAM_WR & ~SS_VRAM_ADDR[1])),
 	.q_b(vram32_q[7:0])
 );
 
@@ -347,8 +403,9 @@ dpram #(14) vram_u1
 	.wren_a(vram_we_u & (vram_ack ^ vram_req) & ~vram_a[1]),
 	.q_a(vram_q1[15:8]),
 
-	.address_b(LOADING ? ram_rst_a[14:1] : vram32_a[15:2]),
-	.wren_b(LOADING),
+	.address_b(vram_portb_addr),
+	.data_b(SS_VRAM_DIN[15:8]),
+	.wren_b(LOADING | (pause_latched & SS_VRAM_REQ & SS_VRAM_WR & ~SS_VRAM_ADDR[1])),
 	.q_b(vram32_q[15:8])
 );
 
@@ -360,8 +417,9 @@ dpram #(14) vram_l2
 	.wren_a(vram_we_l & (vram_ack ^ vram_req) & vram_a[1]),
 	.q_a(vram_q2[7:0]),
 
-	.address_b(LOADING ? ram_rst_a[14:1] : vram32_a[15:2]),
-	.wren_b(LOADING),
+	.address_b(vram_portb_addr),
+	.data_b(SS_VRAM_DIN[7:0]),
+	.wren_b(LOADING | (pause_latched & SS_VRAM_REQ & SS_VRAM_WR & SS_VRAM_ADDR[1])),
 	.q_b(vram32_q[23:16])
 );
 
@@ -373,8 +431,9 @@ dpram #(14) vram_u2
 	.wren_a(vram_we_u & (vram_ack ^ vram_req) & vram_a[1]),
 	.q_a(vram_q2[15:8]),
 
-	.address_b(LOADING ? ram_rst_a[14:1] : vram32_a[15:2]),
-	.wren_b(LOADING),
+	.address_b(vram_portb_addr),
+	.data_b(SS_VRAM_DIN[15:8]),
+	.wren_b(LOADING | (pause_latched & SS_VRAM_REQ & SS_VRAM_WR & SS_VRAM_ADDR[1])),
 	.q_b(vram32_q[31:24])
 );
 
@@ -383,12 +442,15 @@ always @(posedge MCLK) vram_ack <= vram_req;
 
 reg vram32_ack;
 always @(posedge MCLK) vram32_ack <= vram32_req;
+assign SS_VRAM_DOUT = ss_vram_word1_d ? vram32_q[31:16] : vram32_q[15:0];
+assign SS_VRAM_ACK = ss_vram_req_d;
 
 wire VDP_hs, VDP_vs;
 assign HS = ~VDP_hs;
 assign VS = ~VDP_vs;
 
 wire HL;
+wire VDP_SS_IDLE;
 
 vdp vdp
 (
@@ -415,10 +477,19 @@ vdp vdp
 	.VRAM32_ack(vram32_ack),
 	.VRAM32_a(vram32_a),
 	.VRAM32_q(vram32_q),
-	
+
+	.SS_PAUSE(pause_latched),
+	.SS_REQ(SS_VDP_REQ),
+	.SS_WR(SS_VDP_WR),
+	.SS_ADDR(SS_VDP_ADDR),
+	.SS_DIN(SS_VDP_DIN),
+	.SS_DOUT(SS_VDP_DOUT),
+	.SS_ACK(SS_VDP_ACK),
+	.SS_IDLE(VDP_SS_IDLE),
+
 	.EXINT(M68K_EXINT),
 	.HL(HL),
-	
+
 	.HINT(M68K_HINT),
 	.VINT_TG68(M68K_VINT),
 	.INTACK(M68K_INTACK),
@@ -443,7 +514,7 @@ vdp vdp
 	.FIELD_OUT(FIELD),
 	.INTERLACE(INTERLACE),
 	.RESOLUTION(RESOLUTION),
-	
+
 	.EN_BGA(EN_BGA),
 	.EN_BGB(EN_BGB),
 	.EN_SPR(EN_SPR),
@@ -471,6 +542,12 @@ jt89 psg
 
 	.wr_n(MBUS_RNW | ~VDP_SEL | ~MBUS_A[4] | MBUS_A[3]),
 	.din(MBUS_DO[15:8]),
+	.ss_req(pause_latched & SS_PSG_REQ),
+	.ss_wr(SS_PSG_WR),
+	.ss_addr(SS_PSG_ADDR),
+	.ss_din(SS_PSG_DIN),
+	.ss_dout(SS_PSG_DOUT),
+	.ss_ack(SS_PSG_ACK),
 
 	.sound(PSG_SND)
 );
@@ -542,7 +619,7 @@ multitap multitap
 	.P4_X(~JOY_4[9]),
 	.P4_Y(~JOY_4[10]),
 	.P4_Z(~JOY_4[11]),
-	
+
 	.P5_UP(~JOY_5[3]),
 	.P5_DOWN(~JOY_5[2]),
 	.P5_LEFT(~JOY_5[1]),
@@ -563,7 +640,7 @@ multitap multitap
 
 	.MOUSE(MOUSE),
 	.MOUSE_OPT(MOUSE_OPT),
-	
+
 	.GUN_OPT(GUN_OPT),
 	.GUN_TYPE(GUN_TYPE),
 	.GUN_SENSOR(GUN_SENSOR),
@@ -637,7 +714,7 @@ localparam 	MBUS_IDLE         = 0,
 				MBUS_TIME_READ    = 11,
 				MBUS_NOT_USED     = 12,
 				MBUS_REFRESH      = 13,
-				MBUS_FINISH       = 14; 
+				MBUS_FINISH       = 14;
 
 localparam 	ZSRC_MBUS = 0,
 				ZSRC_Z80  = 1;
@@ -656,18 +733,20 @@ wire pause_can_latch = (mstate == MBUS_IDLE) &&
 							  Z80_MREQ_N &&
 							  !VBUS_SEL &&
 							  !ZBUS_SEL &&
+							  VDP_SS_IDLE &&
 							  M68K_MBUS_DTACK_N &&
 							  Z80_MBUS_DTACK_N &&
 							  MBUS_ZBUS_DTACK_N &&
 							  Z80_ZBUS_DTACK_N;
 
 assign PAUSE_ACK = pause_latched;
+assign SS_PAUSE_ACK = pause_latched;
 
 always @(posedge MCLK) begin
 	if (reset) begin
 		pause_latched <= 0;
 	end
-	else if (!PAUSE_REQ) begin
+	else if (!pause_req_any) begin
 		pause_latched <= 0;
 	end
 	else if (!pause_latched && pause_can_latch) begin
@@ -678,7 +757,7 @@ end
 always @(posedge MCLK) begin
 	reg [8:0] refresh_timer;
 	reg rfs_pend;
-	
+
 	if (reset) begin
 		M68K_MBUS_DTACK_N <= 1;
 		Z80_MBUS_DTACK_N  <= 1;
@@ -727,53 +806,53 @@ always @(posedge MCLK) begin
 					MBUS_LDS_N <= M68K_LDS_N;
 					MBUS_RNW <= M68K_RNW;
 					MBUS_ASEL_N <= M68K_A[23];
-					
+
 					//NO DEVICE (usually lockup on real HW)
 					mstate <= MBUS_NOT_USED;
-					
+
 					//ROM: 000000-7FFFFF
 					if (!M68K_A[23]) begin
 						ROM_SEL <= 1;
 						mstate <= MBUS_ROM_READ;
 					end
-						
+
 					//ZBUS: A00000-A07FFF (A08000-A0FFFF)
 					else if (M68K_A[23:16] == 'hA0) begin
 						ZBUS_SEL <= 1;
 						mstate <= MBUS_ZBUS_READ;
 					end
-	
+
 					//I/O: A10000-A1001F (+mirrors)
 					else if (M68K_A[23:5] == {16'hA100, 3'b000}) begin
 						IO_SEL <= 1;
 						mstate <= MBUS_IO_READ;
 					end
-	
+
 					//CTRL: A11100, A11200
 					else if (M68K_A[23:12] == 12'hA11 && !M68K_A[7:1]) begin
 						CTRL_SEL <= 1;
 						M68K_MBUS_DTACK_N <= 0;
 						mstate <= MBUS_FINISH;
 					end
-	
+
 					//FDC A120XX
 					else if (M68K_A[23:8] == 'hA120) begin
 						FDC_SEL <= 1;
 						mstate <= MBUS_FDC_READ;
 					end
-	
+
 					// Cart specific register A130XX
 					else if (M68K_A[23:8] == 'hA130) begin
 						TIME_SEL <= 1;
 						mstate <= MBUS_TIME_READ;
 					end
-	
+
 					//VDP: C00000-C0001F (+mirrors)
 					else if (M68K_A[23:21] == 3'b110 && !M68K_A[18:16] && !M68K_A[7:5]) begin
 						VDP_SEL <= 1;
 						mstate <= MBUS_VDP_READ;
 					end
-	
+
 					//RAM: E00000-FFFFFF
 					else if (&M68K_A[23:21]) begin
 						RAM_SEL <= 1;
@@ -788,10 +867,10 @@ always @(posedge MCLK) begin
 					MBUS_LDS_N <= 0;
 					MBUS_RNW <= 1;
 					MBUS_ASEL_N <= VBUS_A[23];
-					
+
 					//NO DEVICE (usually lockup on real HW)
 					mstate <= MBUS_NOT_USED;
-					
+
 					//ROM: 000000-7FFFFF
 					if (!VBUS_A[23]) begin
 						ROM_SEL <= 1;
@@ -812,22 +891,22 @@ always @(posedge MCLK) begin
 					MBUS_LDS_N <= ~Z80_A[0];
 					MBUS_RNW <= Z80_WR_N;
 					MBUS_ASEL_N <= Z80_A[15] ? BAR[23] : 1'b1;
-					
+
 					//NO DEVICE (usually lockup on real HW)
 					mstate <= MBUS_NOT_USED;
-					
+
 					//ROM: 000000-7FFFFF
 					if (!BAR[23] && Z80_A[15]) begin
 						ROM_SEL <= 1;
 						mstate <= MBUS_ROM_READ;
 					end
-	
+
 					//VDP: C00000-C0001F (+mirrors)
 					else if (!Z80_A[7:5] && !Z80_A[15]) begin
 						VDP_SEL <= 1;
 						mstate <= MBUS_VDP_READ;
 					end
-	
+
 					//RAM: E00000-FFFFFF
 					else if (&BAR[23:21]) begin
 						RAM_SEL <= 1;
@@ -849,7 +928,7 @@ always @(posedge MCLK) begin
 					mstate <= MBUS_RNW ? MBUS_RAM_READ : MBUS_RAM_WRITE;
 				end
 			end
-			
+
 		MBUS_RAM_READ:
 			begin
 				if (RAM_RDY) begin
@@ -867,7 +946,7 @@ always @(posedge MCLK) begin
 				Z80_MBUS_DTACK_N <= ~(msrc == MSRC_Z80);
 				mstate <= MBUS_FINISH;
 			end
-			
+
 		MBUS_ROM_READ:
 			if (!DTACK_N) begin
 				M68K_MBUS_DTACK_N <= ~(msrc == MSRC_M68K);
@@ -875,7 +954,7 @@ always @(posedge MCLK) begin
 				Z80_MBUS_DTACK_N <= ~(msrc == MSRC_Z80);
 				mstate <= MBUS_FINISH;
 			end
-			
+
 		MBUS_VDP_READ:
 			if (!VDP_DTACK_N) begin
 				M68K_MBUS_DTACK_N <= ~(msrc == MSRC_M68K);
@@ -889,7 +968,7 @@ always @(posedge MCLK) begin
 				Z80_MBUS_DTACK_N <= ~(msrc == MSRC_Z80);
 				mstate <= MBUS_FINISH;
 			end
-			
+
 		MBUS_FDC_READ:
 			if (!DTACK_N) begin
 				M68K_MBUS_DTACK_N <= ~(msrc == MSRC_M68K);
@@ -897,7 +976,7 @@ always @(posedge MCLK) begin
 				Z80_MBUS_DTACK_N <= ~(msrc == MSRC_Z80);
 				mstate <= MBUS_FINISH;
 			end
-			
+
 		MBUS_TIME_READ:
 			begin
 				mstate <= MBUS_NOT_USED;
@@ -910,7 +989,7 @@ always @(posedge MCLK) begin
 				Z80_MBUS_DTACK_N <= ~(msrc == MSRC_Z80);
 				mstate <= MBUS_FINISH;
 			end
-			
+
 		MBUS_REFRESH:
 			begin
 				if (!RFS_RDY) begin
@@ -918,7 +997,7 @@ always @(posedge MCLK) begin
 					mstate <= MBUS_IDLE;
 				end
 			end
-			
+
 		MBUS_FINISH:
 			begin
 				if ((M68K_AS_N && !M68K_MBUS_DTACK_N && msrc == MSRC_M68K) ||
@@ -972,7 +1051,7 @@ assign TIME_N = ~TIME_SEL;
 assign CE0_N =  ~(MBUS_A[23:22] == {1'b0, CART_N});		//000000-3FFFFF /CART=0 or 400000-7FFFFF /CART=1
 assign ROM_N =  ~(MBUS_A[23:21] == {1'b0,~CART_N,1'b0});	//400000-5FFFFF /CART=0 or 000000-1FFFFF /CART=1
 assign RAS2_N = ~(MBUS_A[23:21] == {1'b0,~CART_N,1'b1});	//600000-7FFFFF /CART=0 or 200000-3FFFFF /CART=1 (pulse in real)
-assign FDC_N =  ~(MBUS_A[23:8] == 16'hA120);					//A12000-A120FF 
+assign FDC_N =  ~(MBUS_A[23:8] == 16'hA120);					//A12000-A120FF
 
 assign RAM_CE_N = ~RAM_SEL;
 
@@ -997,8 +1076,17 @@ wire        Z80_RD_N;
 wire        Z80_WR_N;
 wire [15:0] Z80_A;
 wire  [7:0] Z80_DO;
+wire [211:0] Z80_REG_IMAGE;
+wire [223:0] Z80_SS_IMAGE = {12'h000, Z80_REG_IMAGE};
 wire        Z80_IO = ~Z80_MREQ_N & (~Z80_RD_N | ~Z80_WR_N);
 wire        Z80_IO_PRE = ~Z80_MREQ_N & Z80_RFSH_N;
+reg   [2:0] ss_z80_addr_d;
+reg         ss_z80_req_d;
+reg [223:0] ss_z80_stage_image;
+reg  [31:0] ss_z80_stage_ctrl;
+reg         ss_z80_commit_pending;
+wire        ss_z80_apply = ss_z80_commit_pending & pause_latched;
+wire [31:0] Z80_SS_CTRL;
 
 //T80s #(.T2Write(1)) Z80
 T80pa Z80
@@ -1018,7 +1106,10 @@ T80pa Z80
 	.WR_n(Z80_WR_N),
 	.A(Z80_A),
 	.DI(!Z80_ZBUS_DTACK_N ? Z80_ZBUS_D : (Z80_A[0] ? MBUS_DI[7:0] : MBUS_DI[15:8])),
-	.DO(Z80_DO)
+	.DO(Z80_DO),
+	.REG(Z80_REG_IMAGE),
+	.DIRSet(ss_z80_apply),
+	.DIR(ss_z80_stage_image[211:0])
 );
 
 always @(posedge MCLK) begin
@@ -1040,6 +1131,10 @@ always @(posedge MCLK) begin
 	if (reset) begin
 		Z80_BUSRQ_N <= 1;
 		Z80_RESET_N <= 0;
+	end
+	else if (ss_z80_apply) begin
+		Z80_BUSRQ_N <= ss_z80_stage_ctrl[1];
+		Z80_RESET_N <= ss_z80_stage_ctrl[0];
 	end
 	else if(CTRL_SEL & ~MBUS_RNW & ~MBUS_UDS_N) begin
 		if (MBUS_A[11:8] == 1) Z80_BUSRQ_N <= ~MBUS_DO[8];
@@ -1079,22 +1174,87 @@ wire       Z80_MBUS_SEL = Z80_IO & ~Z80_ZBUS;
 wire ZRAM_SEL = ~ZBUS_A[14];
 
 wire  [7:0] ZRAM_DO;
+wire  [7:0] SS_ZRAM_DO;
+reg         ss_ram_req_d;
 dpram #(13) ramZ80
 (
 	.clock(MCLK),
 	.address_a(ZBUS_A[12:0]),
 	.data_a(ZBUS_DO),
 	.wren_a(ZBUS_WE & ZRAM_SEL),
-	.q_a(ZRAM_DO)
+	.q_a(ZRAM_DO),
+	.address_b(SS_RAM_ADDR),
+	.data_b(SS_RAM_DIN),
+	.wren_b(pause_latched & SS_RAM_REQ & SS_RAM_WR),
+	.q_b(SS_ZRAM_DO)
 );
+
+assign SS_RAM_DOUT = SS_ZRAM_DO;
+assign SS_RAM_ACK = ss_ram_req_d;
+assign SS_Z80_ACK = ss_z80_req_d;
+
+always @(*) begin
+	case (ss_z80_addr_d)
+		3'd0: SS_Z80_DOUT = Z80_SS_CTRL;
+		3'd1: SS_Z80_DOUT = Z80_SS_IMAGE[31:0];
+		3'd2: SS_Z80_DOUT = Z80_SS_IMAGE[63:32];
+		3'd3: SS_Z80_DOUT = Z80_SS_IMAGE[95:64];
+		3'd4: SS_Z80_DOUT = Z80_SS_IMAGE[127:96];
+		3'd5: SS_Z80_DOUT = Z80_SS_IMAGE[159:128];
+		3'd6: SS_Z80_DOUT = Z80_SS_IMAGE[191:160];
+		3'd7: SS_Z80_DOUT = Z80_SS_IMAGE[223:192];
+		default: SS_Z80_DOUT = 32'h00000000;
+	endcase
+end
+
+always @(posedge MCLK) begin
+	if (reset) begin
+		ss_ram_req_d <= 0;
+		ss_vram_req_d <= 0;
+		ss_vram_word1_d <= 0;
+		ss_z80_req_d <= 0;
+		ss_z80_addr_d <= 0;
+		ss_z80_stage_image <= 0;
+		ss_z80_stage_ctrl <= 0;
+		ss_z80_commit_pending <= 0;
+	end
+	else begin
+		ss_ram_req_d <= pause_latched & SS_RAM_REQ;
+		ss_vram_req_d <= pause_latched & SS_VRAM_REQ;
+		if (pause_latched & SS_VRAM_REQ) ss_vram_word1_d <= vram_ss_word1;
+		ss_z80_req_d <= pause_latched & SS_Z80_REQ;
+
+		if (pause_latched & SS_Z80_REQ) ss_z80_addr_d <= SS_Z80_ADDR;
+
+		if (pause_latched & SS_Z80_REQ & SS_Z80_WR) begin
+			case (SS_Z80_ADDR)
+				3'd0: begin
+					ss_z80_stage_ctrl <= SS_Z80_DIN;
+					if (SS_Z80_DIN[31]) ss_z80_commit_pending <= 1'b1;
+				end
+				3'd1: ss_z80_stage_image[31:0] <= SS_Z80_DIN;
+				3'd2: ss_z80_stage_image[63:32] <= SS_Z80_DIN;
+				3'd3: ss_z80_stage_image[95:64] <= SS_Z80_DIN;
+				3'd4: ss_z80_stage_image[127:96] <= SS_Z80_DIN;
+				3'd5: ss_z80_stage_image[159:128] <= SS_Z80_DIN;
+				3'd6: ss_z80_stage_image[191:160] <= SS_Z80_DIN;
+				3'd7: ss_z80_stage_image[223:192] <= SS_Z80_DIN;
+			endcase
+		end
+
+		if (ss_z80_apply) ss_z80_commit_pending <= 1'b0;
+	end
+end
 
 always @(posedge MCLK) begin
 	ZBUS_WE <= 0;
-	
+
 	if (reset) begin
 		MBUS_ZBUS_DTACK_N <= 1;
 		Z80_ZBUS_DTACK_N  <= 1;
 		zstate <= ZBUS_IDLE;
+		Z80_BR_N <= 1;
+		Z80_BGACK_N <= 1;
 		Z80_BGACK_DIS <= 0;
 	end
 	else begin
@@ -1139,9 +1299,14 @@ always @(posedge MCLK) begin
 				zstate <= ZBUS_IDLE;
 			end
 		endcase
-		
-		
-		if (!pause_latched && Z80_MBUS_SEL && Z80_BR_N && Z80_BGACK_N && VBUS_BR_N && VBUS_BGACK_N && M68K_CLKENp) begin
+
+
+		if (ss_z80_apply) begin
+			Z80_BR_N <= ss_z80_stage_ctrl[2];
+			Z80_BGACK_N <= ss_z80_stage_ctrl[3];
+			Z80_BGACK_DIS <= ss_z80_stage_ctrl[4];
+		end
+		else if (!pause_latched && Z80_MBUS_SEL && Z80_BR_N && Z80_BGACK_N && VBUS_BR_N && VBUS_BGACK_N && M68K_CLKENp) begin
 			Z80_BR_N <= 0;
 		end
 		else if (!pause_latched && !Z80_BR_N && !M68K_BG_N && VBUS_BR_N && VBUS_BGACK_N && M68K_AS_N && M68K_CLKENn) begin
@@ -1168,9 +1333,11 @@ end
 
 wire BANK_SEL = ZBUS_A[14:8] == 7'h60;
 reg [23:15] BAR;
+assign Z80_SS_CTRL = {7'b0000000, BAR, 10'b0000000000, Z80_BGACK_DIS, Z80_BGACK_N, Z80_BR_N, Z80_BUSRQ_N, Z80_RESET_N};
 
 always @(posedge MCLK) begin
 	if (reset) BAR <= 0;
+	else if (ss_z80_apply) BAR <= ss_z80_stage_ctrl[23:15];
 	else if (BANK_SEL & ZBUS_WE) BAR <= {ZBUS_DO[0], BAR[23:16]};
 end
 
@@ -1199,11 +1366,17 @@ jt12 fm
 	.addr(ZBUS_A[1:0]),
 	.wr_n(~(FM_SEL & ZBUS_WE)),
 	.din(ZBUS_DO),
+	.ss_req(pause_latched & SS_FM_REQ),
+	.ss_wr(SS_FM_WR),
+	.ss_addr(SS_FM_ADDR),
+	.ss_din(SS_FM_DIN),
 	.dout(FM_DO),
 	.en_hifi_pcm( EN_HIFI_PCM ),
 	.ladder(LADDER),
 	.snd_left(FM_left),
-	.snd_right(FM_right)
+	.snd_right(FM_right),
+	.ss_dout(SS_FM_DOUT),
+	.ss_ack(SS_FM_ACK)
 );
 
 wire signed [15:0] fm_adjust_l = (FM_left << 4) + (FM_left << 2) + (FM_left << 1) + (FM_left >>> 2);
@@ -1246,7 +1419,7 @@ jt12_genmix genmix
 reg [15:0] mix_l, mix_r;
 always @(posedge MCLK) begin
 	reg [15:0] mcd_l, mcd_r;
-	
+
 	if(EXT_EN) begin
 		mix_l <= {SL[15],SL[15:1]} + {EXT_SL[15],EXT_SL[15:1]};
 		mix_r <= {SR[15],SR[15:1]} + {EXT_SR[15],EXT_SR[15:1]};

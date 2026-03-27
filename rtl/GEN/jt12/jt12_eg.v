@@ -19,10 +19,11 @@
 
     */
 
-module jt12_eg (
+module jt12_eg #(parameter num_ch=6) (
     input               rst,
     input               clk,
     input               clk_en /* synthesis direct_enable */,
+    input               ss_apply,
     input               zero,
     input               eg_stop,
     // envelope configuration
@@ -45,19 +46,37 @@ module jt12_eg (
     input       [6:0]   tl_IV,
 
     output  reg [9:0]   eg_V,
-    output  reg         pg_rst_II
+    output  reg         pg_rst_II,
+    input  [((64*num_ch)+44)-1:0] ss_state_in,
+    output [((64*num_ch)+44)-1:0] ss_state_out
 );
-
-parameter num_ch=6;
+localparam integer EG_SS_CNTSH_BITS = 4*num_ch;
+localparam integer EG_SS_EGSH_BITS = 10*(4*num_ch-3);
+localparam integer EG_SS_STATE_BITS = 3*(4*num_ch);
+localparam integer EG_SS_SSGINV_BITS = 4*num_ch-3;
+localparam integer EG_SS_KON_BITS = 4*num_ch;
+localparam integer EG_SS_EGCNT_BITS = 17;
+localparam integer EG_SS_SHIFT_BITS = EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS + EG_SS_STATE_BITS + EG_SS_SSGINV_BITS + EG_SS_KON_BITS;
+localparam integer EG_SS_LOCAL_LSB = EG_SS_SHIFT_BITS + EG_SS_EGCNT_BITS;
+localparam integer EG_SS_LOCAL_BITS = 27 + 30 + 3;
 
 wire [14:0] eg_cnt;
+wire [EG_SS_EGCNT_BITS-1:0] ss_egcnt_state_out;
+wire [EG_SS_CNTSH_BITS-1:0] ss_cntsh_state_out;
+wire [EG_SS_EGSH_BITS-1:0] ss_egsh_state_out;
+wire [EG_SS_STATE_BITS-1:0] ss_egstate_state_out;
+wire [EG_SS_SSGINV_BITS-1:0] ss_ssg_inv_state_out;
+wire [EG_SS_KON_BITS-1:0] ss_konsh_state_out;
 
 jt12_eg_cnt u_egcnt(
     .rst    ( rst   ),
     .clk    ( clk   ),
     .clk_en ( clk_en & ~eg_stop ),
+    .ss_apply( ss_apply ),
     .zero   ( zero  ),
-    .eg_cnt ( eg_cnt)
+    .eg_cnt ( eg_cnt),
+    .ss_state_in( ss_state_in[EG_SS_EGCNT_BITS-1:0] ),
+    .ss_state_out( ss_egcnt_state_out )
 );
 
 wire keyon_last_I;
@@ -139,31 +158,52 @@ jt12_eg_comb u_comb(
     .final_eg_out   ( eg_out_IV     )
 );
 
-always @(posedge clk) if(clk_en) begin
-    eg_in_II    <= eg_in_I;
-    attack_II   <= state_next_I[0];
-    base_rate_II<= base_rate_I;
-    ssg_en_II   <= ssg_en_I;
-    ssg_inv_II  <= ssg_inv_out_I;
-    pg_rst_II   <= pg_rst_I;
+always @(posedge clk)
+    if(ss_apply) begin
+        attack_II <= ss_state_in[EG_SS_LOCAL_LSB];
+        attack_III <= ss_state_in[EG_SS_LOCAL_LSB+1];
+        base_rate_II <= ss_state_in[EG_SS_LOCAL_LSB+6:EG_SS_LOCAL_LSB+2];
+        rate_in_III <= ss_state_in[EG_SS_LOCAL_LSB+11:EG_SS_LOCAL_LSB+7];
+        step_III <= ss_state_in[EG_SS_LOCAL_LSB+12];
+        ssg_en_II <= ss_state_in[EG_SS_LOCAL_LSB+13];
+        ssg_en_III <= ss_state_in[EG_SS_LOCAL_LSB+14];
+        sum_in_III <= ss_state_in[EG_SS_LOCAL_LSB+15];
+        ssg_inv_II <= ss_state_in[EG_SS_LOCAL_LSB+16];
+        ssg_inv_III <= ss_state_in[EG_SS_LOCAL_LSB+17];
+        ssg_inv_IV <= ss_state_in[EG_SS_LOCAL_LSB+18];
+        pg_rst_II <= ss_state_in[EG_SS_LOCAL_LSB+19];
+        eg_in_II <= ss_state_in[EG_SS_LOCAL_LSB+29:EG_SS_LOCAL_LSB+20];
+        eg_in_III <= ss_state_in[EG_SS_LOCAL_LSB+39:EG_SS_LOCAL_LSB+30];
+        eg_in_IV <= ss_state_in[EG_SS_LOCAL_LSB+49:EG_SS_LOCAL_LSB+40];
+        eg_V <= ss_state_in[EG_SS_LOCAL_LSB+59:EG_SS_LOCAL_LSB+50];
+    end else if(clk_en) begin
+        eg_in_II    <= eg_in_I;
+        attack_II   <= state_next_I[0];
+        base_rate_II<= base_rate_I;
+        ssg_en_II   <= ssg_en_I;
+        ssg_inv_II  <= ssg_inv_out_I;
+        pg_rst_II   <= pg_rst_I;
 
-    eg_in_III   <= eg_in_II;
-    attack_III  <= attack_II;
-    rate_in_III <= rate_out_II[5:1];
-    ssg_en_III  <= ssg_en_II;
-    ssg_inv_III <= ssg_inv_II;
-    step_III    <= step_II;
-    sum_in_III  <= sum_out_II;
+        eg_in_III   <= eg_in_II;
+        attack_III  <= attack_II;
+        rate_in_III <= rate_out_II[5:1];
+        ssg_en_III  <= ssg_en_II;
+        ssg_inv_III <= ssg_inv_II;
+        step_III    <= step_II;
+        sum_in_III  <= sum_out_II;
 
-    ssg_inv_IV  <= ssg_inv_III;
-    eg_in_IV    <= pure_eg_out_III;
-    eg_V        <= eg_out_IV;
-end
+        ssg_inv_IV  <= ssg_inv_III;
+        eg_in_IV    <= pure_eg_out_III;
+        eg_V        <= eg_out_IV;
+    end
 
 jt12_sh #( .width(1), .stages(4*num_ch) ) u_cntsh(
     .clk    ( clk       ),
     .clk_en ( clk_en    ),
+    .ss_apply( ss_apply ),
     .din    ( cnt_lsb_II),
+    .ss_state_in( ss_state_in[EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS - 1:EG_SS_EGCNT_BITS] ),
+    .ss_state_out( ss_cntsh_state_out ),
     .drop   ( cnt_in_II )
 );
 
@@ -171,7 +211,10 @@ jt12_sh_rst #( .width(10), .stages(4*num_ch-3), .rstval(1'b1) ) u_egsh(
     .clk    ( clk       ),
     .clk_en ( clk_en    ),
     .rst    ( rst       ),
+    .ss_apply( ss_apply ),
     .din    ( eg_in_IV  ),
+    .ss_state_in( ss_state_in[EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS - 1:EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS] ),
+    .ss_state_out( ss_egsh_state_out ),
     .drop   ( eg_in_I   )
 );
 
@@ -179,7 +222,10 @@ jt12_sh_rst #( .width(3), .stages(4*num_ch), .rstval(1'b1) ) u_egstate(
     .clk    ( clk       ),
     .clk_en ( clk_en    ),
     .rst    ( rst       ),
+    .ss_apply( ss_apply ),
     .din    ( state_next_I  ),
+    .ss_state_in( ss_state_in[EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS + EG_SS_STATE_BITS - 1:EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS] ),
+    .ss_state_out( ss_egstate_state_out ),
     .drop   ( state_in_I    )
 );
 
@@ -187,7 +233,10 @@ jt12_sh_rst #( .width(1), .stages(4*num_ch-3), .rstval(1'b0) ) u_ssg_inv(
     .clk    ( clk           ),
     .clk_en ( clk_en        ),
     .rst    ( rst           ),
+    .ss_apply( ss_apply     ),
     .din    ( ssg_inv_IV    ),
+    .ss_state_in( ss_state_in[EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS + EG_SS_STATE_BITS + EG_SS_SSGINV_BITS - 1:EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS + EG_SS_STATE_BITS] ),
+    .ss_state_out( ss_ssg_inv_state_out ),
     .drop   ( ssg_inv_in_I  )
 );
 
@@ -195,9 +244,35 @@ jt12_sh_rst #( .width(1), .stages(4*num_ch), .rstval(1'b0) ) u_konsh(
     .clk    ( clk       ),
     .clk_en ( clk_en    ),
     .rst    ( rst       ),  
+    .ss_apply( ss_apply ),
     .din    ( keyon_I   ),
+    .ss_state_in( ss_state_in[EG_SS_SHIFT_BITS + EG_SS_EGCNT_BITS - 1:EG_SS_SHIFT_BITS + EG_SS_EGCNT_BITS - EG_SS_KON_BITS] ),
+    .ss_state_out( ss_konsh_state_out ),
     .drop   ( keyon_last_I  )
 );
+
+assign ss_state_out[EG_SS_EGCNT_BITS-1:0] = ss_egcnt_state_out;
+assign ss_state_out[EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS - 1:EG_SS_EGCNT_BITS] = ss_cntsh_state_out;
+assign ss_state_out[EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS - 1:EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS] = ss_egsh_state_out;
+assign ss_state_out[EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS + EG_SS_STATE_BITS - 1:EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS] = ss_egstate_state_out;
+assign ss_state_out[EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS + EG_SS_STATE_BITS + EG_SS_SSGINV_BITS - 1:EG_SS_EGCNT_BITS + EG_SS_CNTSH_BITS + EG_SS_EGSH_BITS + EG_SS_STATE_BITS] = ss_ssg_inv_state_out;
+assign ss_state_out[EG_SS_SHIFT_BITS + EG_SS_EGCNT_BITS - 1:EG_SS_SHIFT_BITS + EG_SS_EGCNT_BITS - EG_SS_KON_BITS] = ss_konsh_state_out;
+assign ss_state_out[EG_SS_LOCAL_LSB] = attack_II;
+assign ss_state_out[EG_SS_LOCAL_LSB+1] = attack_III;
+assign ss_state_out[EG_SS_LOCAL_LSB+6:EG_SS_LOCAL_LSB+2] = base_rate_II;
+assign ss_state_out[EG_SS_LOCAL_LSB+11:EG_SS_LOCAL_LSB+7] = rate_in_III;
+assign ss_state_out[EG_SS_LOCAL_LSB+12] = step_III;
+assign ss_state_out[EG_SS_LOCAL_LSB+13] = ssg_en_II;
+assign ss_state_out[EG_SS_LOCAL_LSB+14] = ssg_en_III;
+assign ss_state_out[EG_SS_LOCAL_LSB+15] = sum_in_III;
+assign ss_state_out[EG_SS_LOCAL_LSB+16] = ssg_inv_II;
+assign ss_state_out[EG_SS_LOCAL_LSB+17] = ssg_inv_III;
+assign ss_state_out[EG_SS_LOCAL_LSB+18] = ssg_inv_IV;
+assign ss_state_out[EG_SS_LOCAL_LSB+19] = pg_rst_II;
+assign ss_state_out[EG_SS_LOCAL_LSB+29:EG_SS_LOCAL_LSB+20] = eg_in_II;
+assign ss_state_out[EG_SS_LOCAL_LSB+39:EG_SS_LOCAL_LSB+30] = eg_in_III;
+assign ss_state_out[EG_SS_LOCAL_LSB+49:EG_SS_LOCAL_LSB+40] = eg_in_IV;
+assign ss_state_out[EG_SS_LOCAL_LSB+59:EG_SS_LOCAL_LSB+50] = eg_V;
 
 
 endmodule // jt12_eg

@@ -23,8 +23,11 @@ module jt12_eg_cnt(
 	input rst,
 	input clk,
 	input clk_en /* synthesis direct_enable */,
+	input ss_apply,
 	input zero,
-	output reg [14:0] eg_cnt
+	output reg [14:0] eg_cnt,
+	input [16:0] ss_state_in,
+	output [16:0] ss_state_out
 );
 
 reg	[1:0] eg_cnt_base;
@@ -33,8 +36,10 @@ always @(posedge clk, posedge rst) begin : envelope_counter
 	if( rst ) begin
 		eg_cnt_base	<= 2'd0;
 		eg_cnt		<=15'd0;
-	end
-	else begin
+	end else if( ss_apply ) begin
+		eg_cnt_base <= ss_state_in[1:0];
+		eg_cnt <= ss_state_in[16:2];
+	end else begin
 		if( zero && clk_en ) begin
 			// envelope counter increases every 3 output samples,
 			// there is one sample every 24 clock ticks
@@ -46,5 +51,8 @@ always @(posedge clk, posedge rst) begin : envelope_counter
 		end
 	end
 end
+
+assign ss_state_out[1:0] = eg_cnt_base;
+assign ss_state_out[16:2] = eg_cnt;
 
 endmodule // jt12_eg_cnt

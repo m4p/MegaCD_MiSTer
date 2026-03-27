@@ -64,6 +64,12 @@ module jt12_top (
     output  signed  [15:0] snd_right, // FM+PSG
     output  signed  [15:0] snd_left,  // FM+PSG
     output                 snd_sample,
+    input           ss_req,
+    input           ss_wr,
+    input           [ 6:0] ss_addr,
+    input           [31:0] ss_din,
+    output          [31:0] ss_dout,
+    output                 ss_ack,
     input           [ 7:0] debug_bus,
     output          [ 7:0] debug_view
 );
@@ -74,8 +80,39 @@ parameter use_lfo=1, use_ssg=0, num_ch=6, use_pcm=1;
 parameter use_adpcm=0;
 parameter JT49_DIV=2;
 parameter mask_div=1;
+localparam integer JT12_MMR_BITS = 136;
+localparam integer JT12_REG_BITS = 1273;
+localparam integer JT12_TIMERS_BITS = 30;
+localparam integer JT12_LFO_BITS = 14;
+localparam integer JT12_PG_BITS = (20*(4*num_ch)) + 60 + 28;
+localparam integer JT12_EG_BITS = (64*num_ch) + 44;
+localparam integer JT12_OP_BITS = (42*num_ch) + 60 + 65;
+localparam integer JT12_SS_BITS = JT12_MMR_BITS + JT12_REG_BITS + JT12_TIMERS_BITS + JT12_LFO_BITS + JT12_PG_BITS + JT12_EG_BITS + JT12_OP_BITS;
+localparam integer JT12_SS_WORDS = (JT12_SS_BITS + 31) / 32;
+localparam integer JT12_SS_BITS_PADDED = JT12_SS_WORDS * 32;
+localparam integer JT12_MMR_LSB = 0;
+localparam integer JT12_REG_LSB = JT12_MMR_LSB + JT12_MMR_BITS;
+localparam integer JT12_TIMERS_LSB = JT12_REG_LSB + JT12_REG_BITS;
+localparam integer JT12_LFO_LSB = JT12_TIMERS_LSB + JT12_TIMERS_BITS;
+localparam integer JT12_PG_LSB = JT12_LFO_LSB + JT12_LFO_BITS;
+localparam integer JT12_EG_LSB = JT12_PG_LSB + JT12_PG_BITS;
+localparam integer JT12_OP_LSB = JT12_EG_LSB + JT12_EG_BITS;
+localparam [6:0] JT12_SS_CTRL_ADDR = 7'h7F;
 
 wire flag_A, flag_B, busy;
+wire [JT12_MMR_BITS-1:0] ss_mmr_state_out;
+wire [JT12_REG_BITS-1:0] ss_reg_state_out;
+wire [JT12_TIMERS_BITS-1:0] ss_timer_state_out;
+wire [JT12_LFO_BITS-1:0] ss_lfo_state_out;
+wire [JT12_PG_BITS-1:0] ss_pg_state_out;
+wire [JT12_EG_BITS-1:0] ss_eg_state_out;
+wire [JT12_OP_BITS-1:0] ss_op_state_out;
+wire [JT12_SS_BITS_PADDED-1:0] ss_live_bits;
+reg [JT12_SS_BITS_PADDED-1:0] ss_shadow_bits;
+reg ss_req_d;
+reg [31:0] ss_dout_reg;
+reg ss_commit_pending;
+wire ss_apply = ss_commit_pending;
 
 wire write = !cs_n && !wr_n;
 wire clk_en, clk_en_ssg;
@@ -167,6 +204,49 @@ wire [ 6:0] flag_ctl;
 wire [ 1:0] div_setting;
 
 wire clk_en_2, clk_en_666, clk_en_111, clk_en_55;
+
+assign ss_ack = ss_req_d;
+assign ss_dout = ss_dout_reg;
+assign ss_live_bits = { {(JT12_SS_BITS_PADDED-JT12_SS_BITS){1'b0}},
+                        ss_op_state_out,
+                        ss_eg_state_out,
+                        ss_pg_state_out,
+                        ss_lfo_state_out,
+                        ss_timer_state_out,
+                        ss_reg_state_out,
+                        ss_mmr_state_out };
+
+always @(posedge clk) begin
+    if( rst ) begin
+        ss_req_d <= 1'b0;
+        ss_dout_reg <= 32'd0;
+        ss_commit_pending <= 1'b0;
+        ss_shadow_bits <= '0;
+    end else begin
+        ss_req_d <= ss_req;
+
+        if( ss_req ) begin
+            ss_dout_reg <= 32'd0;
+            if( ss_addr < JT12_SS_WORDS[6:0] ) begin
+                ss_dout_reg <= ss_live_bits[ss_addr*32 +: 32];
+            end else if( ss_addr == JT12_SS_CTRL_ADDR ) begin
+                ss_dout_reg <= JT12_SS_WORDS;
+            end
+        end
+
+        if( ss_req && ss_wr ) begin
+            if( ss_addr < JT12_SS_WORDS[6:0] ) begin
+                ss_shadow_bits[ss_addr*32 +: 32] <= ss_din;
+            end else if( ss_addr == JT12_SS_CTRL_ADDR && ss_din[31] ) begin
+                ss_commit_pending <= 1'b1;
+            end
+        end
+
+        if( ss_apply ) begin
+            ss_commit_pending <= 1'b0;
+        end
+    end
+end
 
 assign debug_view = { 4'd0, flag_B, flag_A, div_setting };
 
@@ -296,6 +376,7 @@ jt12_mmr #(.use_ssg(use_ssg),.num_ch(num_ch),.use_pcm(use_pcm), .use_adpcm(use_a
     .rst        ( rst       ),
     .clk        ( clk       ),
     .cen        ( cen       ),  // external clock enable
+    .ss_apply   ( ss_apply  ),
     .clk_en     ( clk_en    ),  // internal clock enable
     .clk_en_2   ( clk_en_2  ),  // input cen divided by 2
     .clk_en_ssg ( clk_en_ssg),  // internal clock enable
@@ -394,6 +475,10 @@ jt12_mmr #(.use_ssg(use_ssg),.num_ch(num_ch),.use_pcm(use_pcm), .use_adpcm(use_a
     .psg_addr   ( psg_addr  ),
     .psg_data   ( psg_data  ),
     .psg_wr_n   ( psg_wr_n  ),
+    .ss_state_in( ss_shadow_bits[JT12_MMR_LSB +: JT12_MMR_BITS] ),
+    .ss_state_out( ss_mmr_state_out ),
+    .reg_ss_state_in( ss_shadow_bits[JT12_REG_LSB +: JT12_REG_BITS] ),
+    .reg_ss_state_out( ss_reg_state_out ),
     .debug_bus  ( debug_bus ),
     .div_setting(div_setting)
 );
@@ -406,6 +491,7 @@ jt12_timers #(.num_ch(num_ch)) u_timers (
     .clk        ( clk           ),
     .clk_en     ( timer_cen     ),
     .rst        ( rst           ),
+    .ss_apply   ( ss_apply      ),
     .zero       ( zero          ),
     .value_A    ( value_A       ),
     .value_B    ( value_B       ),
@@ -418,7 +504,9 @@ jt12_timers #(.num_ch(num_ch)) u_timers (
     .flag_A     ( flag_A        ),
     .flag_B     ( flag_B        ),
     .overflow_A ( overflow_A    ),
-    .irq_n      ( irq_n         )
+    .irq_n      ( irq_n         ),
+    .ss_state_in( ss_shadow_bits[JT12_TIMERS_LSB +: JT12_TIMERS_BITS] ),
+    .ss_state_out( ss_timer_state_out )
 );
 
 // YM2203 does not have LFO
@@ -428,6 +516,7 @@ if( use_lfo== 1) begin : gen_lfo
         .rst        ( rst       ),
         .clk        ( clk       ),
         .clk_en     ( clk_en    ),
+        .ss_apply   ( ss_apply  ),
         .zero       ( zero      ),
         `ifdef NOLFO
         .lfo_rst    ( 1'b1      ),
@@ -436,10 +525,13 @@ if( use_lfo== 1) begin : gen_lfo
         `endif
         .lfo_en     ( lfo_en    ),
         .lfo_freq   ( lfo_freq  ),
-        .lfo_mod    ( lfo_mod   )
+        .lfo_mod    ( lfo_mod   ),
+        .ss_state_in( ss_shadow_bits[JT12_LFO_LSB +: JT12_LFO_BITS] ),
+        .ss_state_out( ss_lfo_state_out )
     );
 end else begin : gen_nolfo
     assign lfo_mod = 7'd0;
+    assign ss_lfo_state_out = '0;
 end
 endgenerate
 
@@ -497,6 +589,7 @@ jt12_pg #(.num_ch(num_ch)) u_pg(
     .rst        ( rst           ),
     .clk        ( clk           ),
     .clk_en     ( clk_en        ),
+    .ss_apply   ( ss_apply      ),
     // Channel frequency
     .fnum_I     ( fnum_I        ),
     .block_I    ( block_I       ),
@@ -511,7 +604,9 @@ jt12_pg #(.num_ch(num_ch)) u_pg(
     .pg_rst_II  ( pg_rst_II     ),
     .pg_stop    ( pg_stop       ),
     .keycode_II ( keycode_II    ),
-    .phase_VIII ( phase_VIII    )
+    .phase_VIII ( phase_VIII    ),
+    .ss_state_in( ss_shadow_bits[JT12_PG_LSB +: JT12_PG_BITS] ),
+    .ss_state_out( ss_pg_state_out )
 );
 
 wire [9:0] eg_V;
@@ -520,6 +615,7 @@ jt12_eg #(.num_ch(num_ch)) u_eg(
     .rst            ( rst           ),
     .clk            ( clk           ),
     .clk_en         ( clk_en        ),
+    .ss_apply       ( ss_apply      ),
     .zero           ( zero          ),
     .eg_stop        ( eg_stop       ),
     // envelope configuration
@@ -542,13 +638,18 @@ jt12_eg #(.num_ch(num_ch)) u_eg(
     .amsen_IV       ( amsen_IV      ),
 
     .eg_V           ( eg_V          ),
-    .pg_rst_II      ( pg_rst_II     )
+    .pg_rst_II      ( pg_rst_II     ),
+    .ss_state_in    ( ss_shadow_bits[JT12_EG_LSB +: JT12_EG_BITS] ),
+    .ss_state_out   ( ss_eg_state_out )
 );
 
 jt12_sh #(.width(10),.stages(4)) u_egpad(
     .clk    ( clk       ),
     .clk_en ( clk_en    ),
+    .ss_apply( 1'b0     ),
     .din    ( eg_V      ),
+    .ss_state_in( '0    ),
+    .ss_state_out(      ),
     .drop   ( eg_IX     )
 );
 
@@ -556,6 +657,7 @@ jt12_op #(.num_ch(num_ch)) u_op(
     .rst            ( rst           ),
     .clk            ( clk           ),
     .clk_en         ( clk_en        ),
+    .ss_apply       ( ss_apply      ),
     .pg_phase_VIII  ( phase_VIII    ),
     .eg_atten_IX    ( eg_IX         ),
     .fb_II          ( fb_II         ),
@@ -573,11 +675,16 @@ jt12_op #(.num_ch(num_ch)) u_op(
     .yuse_prev2     ( yuse_prev2    ),
     .zero           ( zero          ),
     .op_result      ( op_result     ),
-    .full_result    ( op_result_hd  )
+    .full_result    ( op_result_hd  ),
+    .ss_state_in    ( ss_shadow_bits[JT12_OP_LSB +: JT12_OP_BITS] ),
+    .ss_state_out   ( ss_op_state_out )
 );
 `else
 assign op_result    = 'd0;
 assign op_result_hd = 'd0;
+assign ss_pg_state_out = '0;
+assign ss_eg_state_out = '0;
+assign ss_op_state_out = '0;
 `endif
 
 /* verilator tracing_on */

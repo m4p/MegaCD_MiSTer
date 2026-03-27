@@ -40,9 +40,12 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 	input [15:0] ftu,
 	input [15:0] alub,
 	input [15:0] iDataBus, input [15:0] iAddrBus,
+	input        SS_APPLY,
+	input [127:0] SS_LOAD,
 	output ze,
 	output reg [15:0] alue,
 	output reg [7:0] ccr,
+	output [127:0] SS_STATE,
 	output [15:0] aluOut);
 
 
@@ -61,15 +64,15 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 `define ALU_ROW_13		16'h2000
 `define ALU_ROW_14		16'h4000
 `define ALU_ROW_15		16'h8000
-	
-	
+
+
 	// Bit positions for flags in CCR
 	localparam CF = 0, VF = 1, ZF = 2, NF = 3, XF = 4;
 
 	reg [15:0] aluLatch;
 	reg [4:0] pswCcr;
 	reg [4:0] ccrCore;
-	
+
 	logic [15:0] result;
 	logic [4:0] ccrTemp;
 	reg coreH;		// half carry latch
@@ -90,10 +93,10 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 	reg isArX;									// Don't set Z
 	reg noCcrEn;
 	reg isByte;
-	
+
 	reg [4:0] ccrMask;
 	reg [4:0] oper;
-	
+
 	logic [15:0] aOperand, dOperand;
 	wire isCorf = ( aluDataCtrl == 2'b10);
 
@@ -101,7 +104,7 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 	wire cIsArX;
 	wire cNoCcrEn;
 	rowDecoder rowDecoder( .ird( ird), .row( cRow), .noCcrEn( cNoCcrEn), .isArX( cIsArX));
-	
+
 	// Get Operation & CCR Mask from row/col
 	// Registering them on T4 increase performance. But slowest part seems to be corf !
 	wire [4:0] cMask;
@@ -117,14 +120,34 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 	wire [31:0] shftResult;
 	reg [7:0] bcdLatch;
 	reg bcdCarry, bcdOverf;
-		
+
 	reg isLong;
 	reg rIrd8;
 	logic isShift;
 	logic shftCin, shftRight, addCin;
-	
-	// Register some decoded signals	
+	wire [31:0] SS_LOAD_W0 = SS_LOAD[31:0];
+	wire [31:0] SS_LOAD_W1 = SS_LOAD[63:32];
+	wire [31:0] SS_LOAD_W2 = SS_LOAD[95:64];
+	wire [31:0] SS_LOAD_W3 = SS_LOAD[127:96];
+
+	assign SS_STATE[31:0] = {16'h0000, aluLatch};
+	assign SS_STATE[63:32] = {2'b00, row, isArX, noCcrEn, isByte, coreH, ccrCore, pswCcr};
+	assign SS_STATE[95:64] = {10'b0000000000, rIrd8, isLong, bcdOverf, bcdCarry, bcdLatch, oper, ccrMask};
+	assign SS_STATE[127:96] = {16'h0000, alue};
+
+	// Register some decoded signals
 	always_ff @( posedge clk) begin
+		if( SS_APPLY) begin
+			row <= SS_LOAD_W1[29:14];
+			isArX <= SS_LOAD_W1[13];
+			noCcrEn <= SS_LOAD_W1[12];
+			isByte <= SS_LOAD_W1[11];
+			rIrd8 <= SS_LOAD_W2[21];
+			isLong <= SS_LOAD_W2[20];
+			ccrMask <= SS_LOAD_W2[9:5];
+			oper <= SS_LOAD_W2[4:0];
+		end
+		else begin
 		if( enT3) begin
 			row <= cRow;
 			isArX <= cIsArX;
@@ -132,18 +155,19 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 			rIrd8 <= ird[8];
 			isByte <= aluIsByte;
 		end
-		
+
 		if( enT4) begin
 			// Decode if long shift
 			// MUL and DIV are long (but special !)
-			isLong <= (ird[7] & ~ird[6]) | shftIsMul | shftIsDiv;			
-			
+			isLong <= (ird[7] & ~ird[6]) | shftIsMul | shftIsDiv;
+
 			ccrMask <= cMask;
 			oper <= aluOp;
 		end
+		end
 	end
-	
-	
+
+
 	always_comb begin
 		// Dest (addr) operand source
 		// If aluCsr (depends on column/row) addrbus is shifted !!
@@ -158,13 +182,13 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 			2'b10:				dOperand = 'X;
 		endcase
 	end
-	
+
 	// Execution
-	   
+
 	// shift operand MSB. Input in ASR/ROL. Carry in right.
 	// Can't be registered because uses bus operands that aren't available early !
 	wire shftMsb = isLong ? alue[15] : (isByte ? aOperand[7] : aOperand[15]);
-	   
+
 	aluShifter shifter( .data( { alue, aOperand}),
 		.swapWords( shftIsMul | shftIsDiv),
 		.cin( shftCin), .dir( shftRight), .isByte( isByte), .isLong( isLong),
@@ -180,12 +204,17 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 	// Precompute and register BCD result on T1
 	// We don't need to wait for execution buses because corf is always added to ALU previous result
 	always_ff @( posedge clk)
-		if( enT1) begin
+		if( SS_APPLY) begin
+			bcdOverf <= SS_LOAD_W2[19];
+			bcdCarry <= SS_LOAD_W2[18];
+			bcdLatch <= SS_LOAD_W2[17:10];
+		end
+		else if( enT1) begin
 			bcdLatch <= bcdResult;
 			bcdCarry <= bcdC;
 			bcdOverf <= bcdV;
 		end
-		
+
 	// Adder carry in selector
 	always_comb
 	begin
@@ -197,7 +226,7 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 			default: addCin = 1'bX;
 		endcase
 	end
-   	
+
 	// Shifter carry in and direction selector
 	always_comb begin
 		case( oper)
@@ -205,7 +234,7 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 		OP_LSR, OP_ASR, OP_ROR, OP_ROXR:            shftRight = 1'b1;
 		default:									shftRight = 1'bX;
 		endcase
-		
+
 		case( oper)
 		OP_LSR,
 		OP_ASL,
@@ -219,28 +248,28 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 				shftCin = rIrd8 ? pswCcr[NF] ^ pswCcr[VF] : pswCcr[ CF];
 			else
 				shftCin = pswCcr[ XF];
-				
+
 		OP_SLAA:	shftCin = aluColumn[1];   // col4 -> 0, col 6-> 1
 		default:	shftCin = 'X;
 		endcase
 	end
-	
-	// ALU operation selector
-	always_comb begin	      
 
-		// sub is DATA - ADDR	    
+	// ALU operation selector
+	always_comb begin
+
+		// sub is DATA - ADDR
 		mySubber( aOperand, dOperand, addCin,
 			(oper == OP_ADD) | (oper == OP_ADDC) | (oper == OP_ADDX),
 			isByte, subResult, subCout, subOv);
-			
+
 		isShift = 1'b0;
 		case( oper)
 		OP_AND: result = aOperand & dOperand;
 		OP_OR:  result = aOperand | dOperand;
 		OP_EOR: result = aOperand ^ dOperand;
-		
+
 		OP_EXT: result = { {8{aOperand[7]}}, aOperand[7:0]};
-		
+
 		OP_SLAA,
 		OP_ASL, OP_ASR,
 		OP_LSL, OP_LSR,
@@ -250,7 +279,7 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 				result = shftResult[15:0];
 				isShift = 1'b1;
 			end
-			
+
 		OP_ADD,
 		OP_ADDC,
 		OP_ADDX,
@@ -263,9 +292,9 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 		OP_SBCD:	result = { 8'hXX, bcdLatch};
 
 		default:	result = 'X;
-		endcase	   
+		endcase
 	end
-	
+
 	task mySubber;
 		input [15:0] inpa, inpb;
 		input cin, bAdd, isByte;
@@ -290,7 +319,7 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 				result = rtemp[ 15:0];
 				cout = rtemp[16];
 			end
-	        
+
 			rm  = isByte ? rtemp[7] : rtemp[15];
 			dm  = isByte ? inpb[ 7] : inpb[ 15];
 			tsm = isByte ? inpa[ 7] : inpa[ 15];
@@ -303,8 +332,8 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 		
 		end
 	endtask
-	
-	
+
+
 	// CCR flags process
 	always_comb begin
 		
@@ -319,8 +348,8 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 		OP_EXT:
 			// Division overflow.
 			if( aluColumn == 5) begin
-				ccrTemp[VF] = 1'b1;		
-				ccrTemp[NF] = 1'b1; 
+				ccrTemp[VF] = 1'b1;
+				ccrTemp[NF] = 1'b1;
 				ccrTemp[ZF] = 1'b0;
 			end
 
@@ -379,7 +408,7 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 				ccrTemp[ XF] = aOperand[0];		ccrTemp[ CF] = aOperand[0];
 				ccrTemp[ VF] = 0;
 			end
-      
+
 		// X not changed on ROL/ROR !
 		OP_ROL:		ccrTemp[ CF] = shftMsb;
 		OP_ROR:		ccrTemp[ CF] = aOperand[0];
@@ -407,9 +436,9 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 		endcase
 				
 	end
-	
+
 	// Core and psw latched at the same cycle
-	
+
 	// CCR filter
 	// CCR out mux for Z & C flags
 	// Z flag for 32-bit result
@@ -422,15 +451,22 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 		if( finish | isArX)
 			ccrMasked[ ZF] = ccrTemp[ ZF] & pswCcr[ ZF];
 	end
-		
+
 	always_ff @( posedge clk) begin
-		if( enT3) begin
+		if( SS_APPLY) begin
+			aluLatch <= SS_LOAD_W0[15:0];
+			coreH <= SS_LOAD_W1[10];
+			ccrCore <= SS_LOAD_W1[9:5];
+			pswCcr <= SS_LOAD_W1[4:0];
+			alue <= SS_LOAD_W3[15:0];
+		end
+		else if( enT3) begin
 			// Update latches from ALU operators
 			if( (| aluColumn)) begin
 				aluLatch <= result;
 				
 				coreH <= subHcarry;
-			   
+
 				// Update CCR core
 				if( (| aluColumn))
 					ccrCore <= ccrTemp;		// Most bits not really used
@@ -452,9 +488,9 @@ module fx68kAlu ( input clk, pwrUp, enT1, enT3, enT4,
 		else if( enT3 &	~noCcrEn & (finish | init))
 			pswCcr <= ccrMasked;
 	end
-	assign ccr = { 3'b0, pswCcr};	
+	assign ccr = { 3'b0, pswCcr};
 
-	      
+
 endmodule
 
 // add bcd correction factor
@@ -500,7 +536,7 @@ module aluShifter( input [31:0] data,
 	output logic [31:0] result);
 	// output reg cout
 
-	logic [31:0] tdata;         
+	logic [31:0] tdata;
 
 	// size mux, put cin in position if dir == right
 	always_comb begin
@@ -531,10 +567,10 @@ endmodule
 // Get current OP from row & col
 module aluGetOp( input [15:0] row, input [2:0] col, input isCorf,
 	output logic [4:0] aluOp);
-	
+
 	always_comb begin
 		aluOp = 'X;
-		unique case( col)  
+		unique case( col)
 		1:   aluOp = OP_AND;
 		5:   aluOp = OP_EXT;
 
@@ -546,7 +582,7 @@ module aluGetOp( input [15:0] row, input [2:0] col, input isCorf,
 					3: aluOp = OP_SUBC;
 					4,6: aluOp = OP_SLAA;
 					endcase
-				
+
 				row[2]:
 					unique case( col)
 					2: aluOp = OP_ADD;
@@ -560,10 +596,10 @@ module aluGetOp( input [15:0] row, input [2:0] col, input isCorf,
 					3: aluOp = isCorf ? OP_ABCD : OP_ADD;
 					4: aluOp = OP_ASL;
 					endcase
-                  
+
 				row[4]:
 					aluOp = ( col == 4) ? OP_LSL : OP_AND;
-				
+
 				row[5],
 				row[6]:
 					unique case( col)
@@ -571,14 +607,14 @@ module aluGetOp( input [15:0] row, input [2:0] col, input isCorf,
 					3: aluOp = OP_SUBC;
 					4: aluOp = OP_LSR;
 					endcase
-				
+
 				row[7]:					// MUL
 					unique case( col)
 					2: aluOp = OP_SUB;
 					3: aluOp = OP_ADD;
 					4: aluOp = OP_ROXR;
 					endcase
-               
+
 				row[8]:
 					// OP_AND For EXT.L
 					// But would be more efficient to change ucode and use column 1 instead of col3 at ublock extr1!				
@@ -587,7 +623,7 @@ module aluGetOp( input [15:0] row, input [2:0] col, input isCorf,
 					3: aluOp = OP_AND;
 					4: aluOp = OP_ROXR;
 					endcase
-               
+
 				row[9]:
 					unique case( col)
 					2: aluOp = OP_SUBX;
@@ -601,20 +637,20 @@ module aluGetOp( input [15:0] row, input [2:0] col, input isCorf,
 					3: aluOp = OP_SUBC;
 					4: aluOp = OP_ROR;
 					endcase
-                
+
 				row[11]:
 					unique case( col)
 					2: aluOp = OP_SUB0;
 					3: aluOp = OP_SUB0;
 					4: aluOp = OP_ROXL;
 					endcase
-                
-				row[12]:	aluOp = OP_ADDX;               
+
+				row[12]:	aluOp = OP_ADDX;
 				row[13]:	aluOp = OP_EOR;
 				row[14]:	aluOp = (col == 4) ? OP_EOR : OP_OR;
 				row[15]:	aluOp = (col == 3) ? OP_ADD : OP_OR;		// OP_ADD used by DBcc
-				
-			endcase         
+
+			endcase
 		endcase
 	end
 endmodule
@@ -686,7 +722,7 @@ module rowDecoder( input [15:0] ird,
 		'h1,'h2,'h3:   row = `ALU_ROW_02;
 		
 		'h5:
-			if( size11)										
+			if( size11)
                row = `ALU_ROW_15;								// As originally and easier to decode
 			else
 				row = ird[8] ? `ALU_ROW_05 : `ALU_ROW_02;     // addq/subq
@@ -745,7 +781,7 @@ module rowDecoder( input [15:0] ird,
 		default:	row = 0;
 		endcase
 	end
-   
+
 	// Decode opcodes that don't affect flags
 	// ADDA/SUBA ADDQ/SUBQ MOVEA
 
@@ -756,14 +792,14 @@ module rowDecoder( input [15:0] ird,
 		( (ird[15:12] == 4'h5) & eaAdir) |
 		// MOVEA
 		( (~ird[15] & ~ird[14] & ird[13]) & ird[8:6] == 3'b001);
-        
+
 endmodule
 
 // Row/col CCR update table
-module ccrTable( 
+module ccrTable(
 	input [2:0] col, input [15:0] row, input finish,
 	output logic [MASK_NBITS-1:0] ccrMask);
-    
+
 	localparam
 		KNZ00 = 5'b01111,   // ok coz operators clear them
 		KKZKK = 5'b00100,
@@ -775,10 +811,10 @@ module ccrTable(
 
 		KNZVC	= 5'b01111,
 		XNKVC	= 5'b11011,	// Used by BCD instructions. Don't modify Z at all at the binary operation. Only at the BCD correction cycle
-		
+
 		CUPDALL = 5'b11111,
 		CUNUSED = 5'bxxxxx;
-    
+
 
 	logic [MASK_NBITS-1:0] ccrMask1;
 
@@ -833,12 +869,12 @@ module ccrTable(
 		endcase
 	end
 
-	// Column 1 (AND)      
+	// Column 1 (AND)
 	always_comb begin
 		if( finish)
 			ccrMask1 = row[7] ? KNZ00 : KNZKK;
 		else
 			ccrMask1 = row[13] | row[14] ? KKZKK : KNZ00;
 	end
-    
+
 endmodule

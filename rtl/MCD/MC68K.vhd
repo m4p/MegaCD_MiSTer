@@ -30,7 +30,13 @@ entity M68K_WRAP is
 		E				: out std_logic;
 		BERR_N		: in std_logic;
 		RESET_O_N	: out std_logic;
-		HALT_O_N		: out std_logic
+		HALT_O_N		: out std_logic;
+		SS_REQ			: in std_logic := '0';
+		SS_WR			: in std_logic := '0';
+		SS_ADDR		: in std_logic_vector(5 downto 0) := (others => '0');
+		SS_DIN		: in std_logic_vector(31 downto 0) := (others => '0');
+		SS_DOUT		: out std_logic_vector(31 downto 0);
+		SS_ACK		: out std_logic
 	);
 end M68K_WRAP;
 
@@ -70,7 +76,13 @@ architecture rtl of M68K_WRAP is
 		oHALTEDn : OUT STD_LOGIC;
 		E  		: OUT STD_LOGIC;
 		VMAn  	: OUT STD_LOGIC;
-		BGn  		: OUT STD_LOGIC
+		BGn  		: OUT STD_LOGIC;
+		SS_REQ   : IN  STD_LOGIC;
+		SS_WR    : IN  STD_LOGIC;
+		SS_ADDR  : IN  STD_LOGIC_VECTOR (5 DOWNTO 0);
+		SS_DIN   : IN  STD_LOGIC_VECTOR (31 DOWNTO 0);
+		SS_DOUT  : OUT STD_LOGIC_VECTOR (31 DOWNTO 0);
+		SS_ACK   : OUT STD_LOGIC
 	);
 	END COMPONENT;
 	
@@ -110,7 +122,13 @@ begin
 		BGACKn   	=> BGACK_N,
 		BGn   		=> BG_N,
 		oRESETn   	=> RESET_O_N,
-		oHALTEDn   	=> HALT_O_N
+		oHALTEDn   	=> HALT_O_N,
+		SS_REQ      => SS_REQ,
+		SS_WR       => SS_WR,
+		SS_ADDR     => SS_ADDR,
+		SS_DIN      => SS_DIN,
+		SS_DOUT     => SS_DOUT,
+		SS_ACK      => SS_ACK
 	);
 	
 end rtl;

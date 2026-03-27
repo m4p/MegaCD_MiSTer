@@ -25,10 +25,11 @@
 */
 
 
-module jt12_op(
+module jt12_op #(parameter num_ch = 6)(
     input           rst,
     input           clk,
     input           clk_en /* synthesis direct_enable */,
+    input           ss_apply,
     input   [9:0]   pg_phase_VIII,
     input   [9:0]   eg_atten_IX,        // output from envelope generator
     input   [2:0]   fb_II,      // voice feedback
@@ -47,10 +48,13 @@ module jt12_op(
     input           zero,
     
     output  signed [ 8:0]   op_result,
-    output  signed [13:0]   full_result
+    output  signed [13:0]   full_result,
+    input [((42*num_ch) + 60 + 65)-1:0] ss_state_in,
+    output [((42*num_ch) + 60 + 65)-1:0] ss_state_out
 );
-
-parameter num_ch = 6;
+localparam integer OP_SS_PREV_BITS = 42*num_ch;
+localparam integer OP_SS_PHASEMOD_BITS = 60;
+localparam integer OP_SS_LOCAL_LSB = OP_SS_PREV_BITS + OP_SS_PHASEMOD_BITS;
 
 /*  enters  exits
     S1      S2
@@ -69,6 +73,10 @@ reg         signbit_IX, signbit_X, signbit_XI;
 reg [11:0]  totalatten_X;
 
 wire [13:0] prev1, prevprev1, prev2;
+wire [14*num_ch-1:0] ss_prev1_state_out;
+wire [14*num_ch-1:0] ss_prevprev1_state_out;
+wire [14*num_ch-1:0] ss_prev2_state_out;
+wire [OP_SS_PHASEMOD_BITS-1:0] ss_phasemod_state_out;
 
 reg [13:0] prev1_din, prevprev1_din, prev2_din;
 
@@ -87,7 +95,10 @@ jt12_sh #( .width(14), .stages(num_ch)) prev1_buffer(
 //  .rst    ( rst       ),
     .clk    ( clk       ),
     .clk_en ( clk_en    ),
+    .ss_apply( ss_apply ),
     .din    ( prev1_din ),
+    .ss_state_in( ss_state_in[14*num_ch-1:0] ),
+    .ss_state_out( ss_prev1_state_out ),
     .drop   ( prev1     )
 );
 
@@ -95,7 +106,10 @@ jt12_sh #( .width(14), .stages(num_ch)) prevprev1_buffer(
 //  .rst    ( rst           ),
     .clk    ( clk           ),
     .clk_en ( clk_en        ),
+    .ss_apply( ss_apply     ),
     .din    ( prevprev1_din ),
+    .ss_state_in( ss_state_in[(28*num_ch)-1:14*num_ch] ),
+    .ss_state_out( ss_prevprev1_state_out ),
     .drop   ( prevprev1     )
 );
 
@@ -103,7 +117,10 @@ jt12_sh #( .width(14), .stages(num_ch)) prev2_buffer(
 //  .rst    ( rst       ),
     .clk    ( clk       ),
     .clk_en ( clk_en    ),
+    .ss_apply( ss_apply ),
     .din    ( prev2_din ),
+    .ss_state_in( ss_state_in[(42*num_ch)-1:28*num_ch] ),
+    .ss_state_out( ss_prev2_state_out ),
     .drop   ( prev2     )
 );
 
@@ -135,10 +152,14 @@ always @(*) begin
     ys = { y[13], y }; // sign-extend
 end
 
-always @(posedge clk) if( clk_en ) begin
-    pm_preshift_II <= xs + ys; // carry is discarded
-    s1_II <= s1_enters;
-end
+always @(posedge clk)
+    if( ss_apply ) begin
+        pm_preshift_II <= ss_state_in[OP_SS_LOCAL_LSB+14:OP_SS_LOCAL_LSB];
+        s1_II <= ss_state_in[OP_SS_LOCAL_LSB+15];
+    end else if( clk_en ) begin
+        pm_preshift_II <= xs + ys; // carry is discarded
+        s1_II <= s1_enters;
+    end
 
 /* REGISTER/CYCLE 2-7 (also YM2612 extra cycles 1-6)
    Shifting of FM feedback signal, adding phase from PG to FM phase
@@ -173,7 +194,10 @@ end
         jt12_sh #( .width(10), .stages(6)) phasemod_sh(
             .clk    ( clk   ),
             .clk_en ( clk_en),
+            .ss_apply( ss_apply ),
             .din    ( phasemod_II ),
+            .ss_state_in( ss_state_in[OP_SS_PREV_BITS + OP_SS_PHASEMOD_BITS - 1:OP_SS_PREV_BITS] ),
+            .ss_state_out( ss_phasemod_state_out ),
             .drop   ( phasemod_VIII )
         );
 //     else begin
@@ -195,9 +219,12 @@ always @(*) begin
     aux_VIII= phase[7:0] ^ {8{~phase[8]}};
 end
 
-always @(posedge clk) if( clk_en ) begin    
-    signbit_IX <= phase[9];     
-end
+always @(posedge clk)
+    if( ss_apply ) begin
+        signbit_IX <= ss_state_in[OP_SS_LOCAL_LSB+16];
+    end else if( clk_en ) begin
+        signbit_IX <= phase[9];
+    end
 
 wire [11:0]  logsin_IX;
 
@@ -229,16 +256,25 @@ jt12_exprom u_exprom(
     .exp    ( mantissa_X )
 );
 
-always @(posedge clk) if( clk_en ) begin
-    exponent_X <= atten_internal_IX[11:8];    
-    signbit_X  <= signbit_IX;    
-end
+always @(posedge clk)
+    if( ss_apply ) begin
+        exponent_X <= ss_state_in[OP_SS_LOCAL_LSB+20:OP_SS_LOCAL_LSB+17];
+        signbit_X  <= ss_state_in[OP_SS_LOCAL_LSB+21];
+    end else if( clk_en ) begin
+        exponent_X <= atten_internal_IX[11:8];
+        signbit_X  <= signbit_IX;
+    end
 
-always @(posedge clk) if( clk_en ) begin
-    mantissa_XI <= mantissa_X;
-    exponent_XI <= exponent_X;
-    signbit_XI  <= signbit_X;     
-end
+always @(posedge clk)
+    if( ss_apply ) begin
+        mantissa_XI <= ss_state_in[OP_SS_LOCAL_LSB+31:OP_SS_LOCAL_LSB+22];
+        exponent_XI <= ss_state_in[OP_SS_LOCAL_LSB+35:OP_SS_LOCAL_LSB+32];
+        signbit_XI  <= ss_state_in[OP_SS_LOCAL_LSB+36];
+    end else if( clk_en ) begin
+        mantissa_XI <= mantissa_X;
+        exponent_XI <= exponent_X;
+        signbit_XI  <= signbit_X;
+    end
 
 // REGISTER/CYCLE 11
 // Introduce test bit as MSB, 2's complement & Carry-out discarded
@@ -261,13 +297,32 @@ always @(*) begin
     endcase
 end
 
-always @(posedge clk) if( clk_en ) begin
-    // REGISTER CYCLE 11
-    op_XII <= ({ test_214, shifter_3 } ^ {14{signbit_XI}}) + {13'd0,signbit_XI};               
-    // REGISTER CYCLE 12
-    // Extra register, take output after here
-    op_result_internal <= op_XII;   
-end
+always @(posedge clk)
+    if( ss_apply ) begin
+        op_XII <= ss_state_in[OP_SS_LOCAL_LSB+50:OP_SS_LOCAL_LSB+37];
+        op_result_internal <= ss_state_in[OP_SS_LOCAL_LSB+64:OP_SS_LOCAL_LSB+51];
+    end else if( clk_en ) begin
+        // REGISTER CYCLE 11
+        op_XII <= ({ test_214, shifter_3 } ^ {14{signbit_XI}}) + {13'd0,signbit_XI};
+        // REGISTER CYCLE 12
+        // Extra register, take output after here
+        op_result_internal <= op_XII;
+    end
+
+assign ss_state_out[14*num_ch-1:0] = ss_prev1_state_out;
+assign ss_state_out[(28*num_ch)-1:14*num_ch] = ss_prevprev1_state_out;
+assign ss_state_out[(42*num_ch)-1:28*num_ch] = ss_prev2_state_out;
+assign ss_state_out[OP_SS_PREV_BITS + OP_SS_PHASEMOD_BITS - 1:OP_SS_PREV_BITS] = ss_phasemod_state_out;
+assign ss_state_out[OP_SS_LOCAL_LSB+14:OP_SS_LOCAL_LSB] = pm_preshift_II;
+assign ss_state_out[OP_SS_LOCAL_LSB+15] = s1_II;
+assign ss_state_out[OP_SS_LOCAL_LSB+16] = signbit_IX;
+assign ss_state_out[OP_SS_LOCAL_LSB+20:OP_SS_LOCAL_LSB+17] = exponent_X;
+assign ss_state_out[OP_SS_LOCAL_LSB+21] = signbit_X;
+assign ss_state_out[OP_SS_LOCAL_LSB+31:OP_SS_LOCAL_LSB+22] = mantissa_XI;
+assign ss_state_out[OP_SS_LOCAL_LSB+35:OP_SS_LOCAL_LSB+32] = exponent_XI;
+assign ss_state_out[OP_SS_LOCAL_LSB+36] = signbit_XI;
+assign ss_state_out[OP_SS_LOCAL_LSB+50:OP_SS_LOCAL_LSB+37] = op_XII;
+assign ss_state_out[OP_SS_LOCAL_LSB+64:OP_SS_LOCAL_LSB+51] = op_result_internal;
 
 `ifdef SIMULATION
 reg signed [13:0] op_sep2_0;

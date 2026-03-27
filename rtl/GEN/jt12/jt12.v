@@ -30,6 +30,10 @@ module jt12 (
     input   [1:0]   addr,
     input           cs_n,
     input           wr_n,
+    input           ss_req,
+    input           ss_wr,
+    input   [6:0]   ss_addr,
+    input   [31:0]  ss_din,
 
     output  [7:0]   dout,
     output          irq_n,
@@ -39,7 +43,9 @@ module jt12 (
     // combined output
     output  signed  [15:0]  snd_right,
     output  signed  [15:0]  snd_left,
-    output          snd_sample
+    output          snd_sample,
+    output  [31:0]  ss_dout,
+    output          ss_ack
 );
 
 // Default parameters for JT12 select a YM2612
@@ -51,6 +57,10 @@ jt12_top u_jt12(
     .addr   ( addr  ),
     .cs_n   ( cs_n  ),
     .wr_n   ( wr_n  ),
+    .ss_req ( ss_req ),
+    .ss_wr  ( ss_wr  ),
+    .ss_addr( ss_addr ),
+    .ss_din ( ss_din ),
 
     .dout   ( dout  ),
     .irq_n  ( irq_n ),
@@ -78,6 +88,8 @@ jt12_top u_jt12(
     .snd_right      ( snd_right     ), // FM+PSG
     .snd_left       ( snd_left      ),  // FM+PSG
     .snd_sample     ( snd_sample    ),
+    .ss_dout        ( ss_dout       ),
+    .ss_ack         ( ss_ack        ),
     .debug_view     (               )
 );
 endmodule // jt03

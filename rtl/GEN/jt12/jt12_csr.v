@@ -24,8 +24,11 @@ module jt12_csr( // Circular Shift Register + input mux
     input           rst,
     input           clk,
     input           clk_en /* synthesis direct_enable */,
+    input           ss_apply,
     input   [ 7:0]  din,
     input   [43:0]  shift_in,
+    input   [527:0] ss_state_in,
+    output  [527:0] ss_state_out,
     output  [43:0]  shift_out,
 
     input           up_tl,     
@@ -48,7 +51,10 @@ jt12_sh_rst #(.width(regop_width),.stages(12)) u_regch(
     .clk    ( clk          ),
     .clk_en ( clk_en       ),
     .rst    ( rst          ),
+    .ss_apply( ss_apply    ),
     .din    ( regop_in     ),
+    .ss_state_in( ss_state_in ),
+    .ss_state_out( ss_state_out ),
     .drop   ( shift_out    )
 );
 

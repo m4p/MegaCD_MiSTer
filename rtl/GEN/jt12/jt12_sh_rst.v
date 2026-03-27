@@ -25,7 +25,10 @@ module jt12_sh_rst #(parameter width=5, stages=32, rstval=1'b0 )
 	input					rst,	
 	input 					clk,
 	input					clk_en /* synthesis direct_enable */,
+	input					ss_apply,
 	input		[width-1:0]	din,
+	input		[width*stages-1:0] ss_state_in,
+	output		[width*stages-1:0] ss_state_out,
    	output		[width-1:0]	drop
 );
 
@@ -45,10 +48,13 @@ generate
 		always @(posedge clk, posedge rst) 
 			if( rst ) begin
 				bits[i] <= {stages{rstval}};
+			end else if(ss_apply) begin
+				bits[i] <= ss_state_in[(i*stages) +: stages];
 			end else if(clk_en) begin
 				bits[i] <= {bits[i][stages-2:0], din[i]};
 			end
 		assign drop[i] = bits[i][stages-1];
+		assign ss_state_out[(i*stages) +: stages] = bits[i];
 	end
 endgenerate
 

@@ -95,10 +95,16 @@ entity ASIC is
 		
 		FD_DAT			: out std_logic_vector(10 downto 0);
 		FD_WR				: out std_logic;
-		
+
 		LED_RED			: out std_logic;
 		LED_GREEN		: out std_logic;
-		DEBUG_IDLE      : out std_logic
+		DEBUG_IDLE      : out std_logic;
+		SS_REQ          : in  std_logic := '0';
+		SS_WR           : in  std_logic := '0';
+		SS_ADDR         : in  std_logic_vector(5 downto 0) := (others => '0');
+		SS_DIN          : in  std_logic_vector(31 downto 0) := (others => '0');
+		SS_DOUT         : out std_logic_vector(31 downto 0);
+		SS_ACK          : out std_logic
 	);
 end ASIC;
 
@@ -294,11 +300,170 @@ architecture rtl of ASIC is
 	signal HS 							: HaltState_t;
 	signal HALT_WAIT 					: unsigned(1 downto 0);
 	signal S68K_HALT 					: std_logic;
-			
+
+	constant ASIC_SS_WORDS : integer := 54;
+	constant ASIC_SS_CTRL_ADDR : std_logic_vector(5 downto 0) := "111111";
+	type ss_words_t is array(0 to ASIC_SS_WORDS - 1) of std_logic_vector(31 downto 0);
+	signal SS_SHADOW : ss_words_t := (others => (others => '0'));
+	signal SS_REQ_D : std_logic := '0';
+	signal SS_DOUT_REG : std_logic_vector(31 downto 0) := (others => '0');
+	signal SS_COMMIT_PENDING : std_logic := '0';
+	signal SS_APPLY : std_logic;
+
 begin
 
 	EN <= ENABLE;
-	
+	SS_APPLY <= SS_COMMIT_PENDING;
+	SS_ACK <= SS_REQ_D;
+	SS_DOUT <= SS_DOUT_REG;
+
+	process(RST_N, CLK)
+		variable SS_IDX   : integer range 0 to 63;
+		variable SBA_PAIR : integer range 0 to 31;
+	begin
+		if RST_N = '0' then
+			SS_REQ_D <= '0';
+			SS_DOUT_REG <= (others => '0');
+			SS_COMMIT_PENDING <= '0';
+			SS_SHADOW <= (others => (others => '0'));
+		elsif rising_edge(CLK) then
+			SS_REQ_D <= SS_REQ;
+			if SS_REQ = '1' then
+				SS_IDX := to_integer(unsigned(SS_ADDR));
+				SS_DOUT_REG <= (others => '0');
+				case SS_IDX is
+					when 0 =>
+						SS_DOUT_REG(0) <= RES0;
+						SS_DOUT_REG(1) <= LEDR;
+						SS_DOUT_REG(2) <= LEDG;
+						SS_DOUT_REG(3) <= SRES;
+						SS_DOUT_REG(4) <= SBRQ;
+						SS_DOUT_REG(5) <= IFL2;
+						SS_DOUT_REG(6) <= DMNA0;
+						SS_DOUT_REG(7) <= DMNA1;
+						SS_DOUT_REG(8) <= RET0;
+						SS_DOUT_REG(9) <= RET1;
+						SS_DOUT_REG(10) <= DSR;
+						SS_DOUT_REG(11) <= EDT;
+						SS_DOUT_REG(12) <= OLD_IEN1;
+						SS_DOUT_REG(13) <= OLD_IEN2;
+						SS_DOUT_REG(14) <= CDD_REC_OLD;
+						SS_DOUT_REG(15) <= HOCK_OLD;
+						SS_DOUT_REG(16) <= CD_SC_WR_OLD;
+						SS_DOUT_REG(17) <= CDD_STAT_RECEIVED;
+						SS_DOUT_REG(18) <= OLD_CDC_INT_N;
+						SS_DOUT_REG(19) <= MAIN_CPU_CDC_READ;
+						SS_DOUT_REG(20) <= SUB_CPU_CDC_READ;
+						SS_DOUT_REG(21) <= ERES_N;
+						SS_DOUT_REG(22) <= MCD_RST_DONE;
+						SS_DOUT_REG(25 downto 23) <= std_logic_vector(RST_CNT);
+					when 1 =>
+						SS_DOUT_REG(3 downto 0) <= SC0;
+						SS_DOUT_REG(7 downto 4) <= SC1;
+						SS_DOUT_REG(9 downto 8) <= PM;
+						SS_DOUT_REG(11 downto 10) <= BK;
+						SS_DOUT_REG(14 downto 12) <= DD;
+						SS_DOUT_REG(20 downto 15) <= IEN;
+						SS_DOUT_REG(26 downto 21) <= INT_PEND(6 downto 1);
+						SS_DOUT_REG(27) <= MODE;
+						SS_DOUT_REG(28) <= HOCK;
+						SS_DOUT_REG(29) <= RPT;
+						SS_DOUT_REG(30) <= STS;
+						SS_DOUT_REG(31) <= SMS;
+					when 2 =>
+						SS_DOUT_REG(7 downto 0) <= WP;
+						SS_DOUT_REG(15 downto 8) <= TM;
+						SS_DOUT_REG(16) <= GRON;
+						SS_DOUT_REG(21 downto 17) <= VCS;
+						SS_DOUT_REG(24 downto 22) <= LN;
+						SS_DOUT_REG(27 downto 25) <= DOT;
+						SS_DOUT_REG(28) <= SAOR;
+					when 3 =>
+						SS_DOUT_REG(7 downto 0) <= std_logic_vector(TIMER);
+						SS_DOUT_REG(16 downto 8) <= std_logic_vector(TIME_CLK_CNT);
+						SS_DOUT_REG(28 downto 17) <= SW;
+					when 4 =>
+						SS_DOUT_REG(15 downto 0) <= HIB;
+						SS_DOUT_REG(23 downto 16) <= CFM;
+						SS_DOUT_REG(31 downto 24) <= CFS;
+					when 5 =>
+						SS_DOUT_REG(15 downto 0) <= HD;
+						SS_DOUT_REG(31 downto 16) <= DMAA;
+					when 6 =>
+						SS_DOUT_REG(17 downto 0) <= DMA_ADDR;
+						SS_DOUT_REG(26 downto 18) <= HW;
+					when 7 =>
+						SS_DOUT_REG(7 downto 0) <= VW;
+						SS_DOUT_REG(15 downto 8) <= VDOTS;
+						SS_DOUT_REG(30 downto 16) <= TVBA;
+					when 8 =>
+						SS_DOUT_REG(10 downto 0) <= SMBA;
+						SS_DOUT_REG(23 downto 11) <= ISA;
+						SS_DOUT_REG(29 downto 24) <= STA;
+					when 9 =>
+						SS_DOUT_REG(15 downto 0) <= SB;
+						SS_DOUT_REG(21 downto 16) <= std_logic_vector(SC_CNT);
+					when 10 =>
+						SS_DOUT_REG <= CDDS(31 downto 0);
+					when 11 =>
+						SS_DOUT_REG(7 downto 0) <= CDDS(39 downto 32);
+					when 12 =>
+						SS_DOUT_REG <= CDDC(31 downto 0);
+					when 13 =>
+						SS_DOUT_REG(7 downto 0) <= CDDC(39 downto 32);
+					when 14 =>
+						SS_DOUT_REG(15 downto 0) <= CC(0);
+						SS_DOUT_REG(31 downto 16) <= CC(1);
+					when 15 =>
+						SS_DOUT_REG(15 downto 0) <= CC(2);
+						SS_DOUT_REG(31 downto 16) <= CC(3);
+					when 16 =>
+						SS_DOUT_REG(15 downto 0) <= CC(4);
+						SS_DOUT_REG(31 downto 16) <= CC(5);
+					when 17 =>
+						SS_DOUT_REG(15 downto 0) <= CC(6);
+						SS_DOUT_REG(31 downto 16) <= CC(7);
+					when 18 =>
+						SS_DOUT_REG(15 downto 0) <= CS(0);
+						SS_DOUT_REG(31 downto 16) <= CS(1);
+					when 19 =>
+						SS_DOUT_REG(15 downto 0) <= CS(2);
+						SS_DOUT_REG(31 downto 16) <= CS(3);
+					when 20 =>
+						SS_DOUT_REG(15 downto 0) <= CS(4);
+						SS_DOUT_REG(31 downto 16) <= CS(5);
+					when 21 =>
+						SS_DOUT_REG(15 downto 0) <= CS(6);
+						SS_DOUT_REG(31 downto 16) <= CS(7);
+					when 22 to 53 =>
+						SBA_PAIR := SS_IDX - 22;
+						SS_DOUT_REG(15 downto 0) <= SBA(SBA_PAIR * 2);
+						SS_DOUT_REG(31 downto 16) <= SBA((SBA_PAIR * 2) + 1);
+					when others =>
+						if SS_ADDR = ASIC_SS_CTRL_ADDR then
+							SS_DOUT_REG <= std_logic_vector(to_unsigned(ASIC_SS_WORDS, 32));
+						end if;
+				end case;
+			end if;
+
+			if SS_REQ = '1' and SS_WR = '1' then
+				SS_IDX := to_integer(unsigned(SS_ADDR));
+				case SS_IDX is
+					when 0 to ASIC_SS_WORDS - 1 =>
+						SS_SHADOW(SS_IDX) <= SS_DIN;
+					when others =>
+						if SS_ADDR = ASIC_SS_CTRL_ADDR and SS_DIN(31) = '1' then
+							SS_COMMIT_PENDING <= '1';
+						end if;
+				end case;
+			end if;
+
+			if SS_APPLY = '1' then
+				SS_COMMIT_PENDING <= '0';
+			end if;
+		end if;
+	end process;
+
 	process( CLK )
 	begin
 		if rising_edge(CLK) then
@@ -320,7 +485,11 @@ begin
 			MCD_RST_DONE <= '1';
 			RST_CNT <= (others => '1');
 		elsif rising_edge(CLK) then
-			if EN = '1' then
+			if SS_APPLY = '1' then
+				ERES_N <= SS_SHADOW(0)(21);
+				MCD_RST_DONE <= SS_SHADOW(0)(22);
+				RST_CNT <= unsigned(SS_SHADOW(0)(25 downto 23));
+			elsif EN = '1' then
 				MCD_RST_DONE <= '0';
 				RST_CNT <= RST_CNT - 1;
 				if MAIN_RST_EXEC = '1' or SUB_RST_EXEC = '1' then
@@ -346,10 +515,16 @@ begin
 			--RET_SET <= '0';
 			--DMNA_REQ <= '0';
 			--DMNA_SET <= '0';
-			
+
 			MODE <= '0';
 		elsif rising_edge(CLK) then
-			if M68K_GA_SEL = '1' and EXT_VA(5 downto 1) = "00001" and EXT_RNW = '0' and EXT_LDS_N = '0' and M68K_REG_DTACK_N = '1' then
+			if SS_APPLY = '1' then
+				DMNA0 <= SS_SHADOW(0)(6);
+				DMNA1 <= SS_SHADOW(0)(7);
+				RET0 <= SS_SHADOW(0)(8);
+				RET1 <= SS_SHADOW(0)(9);
+				MODE <= SS_SHADOW(1)(27);
+			elsif M68K_GA_SEL = '1' and EXT_VA(5 downto 1) = "00001" and EXT_RNW = '0' and EXT_LDS_N = '0' and M68K_REG_DTACK_N = '1' then
 				if EXT_VDI(1) = '1' then
 					DMNA0 <= '1';
 					RET0 <= '0';
@@ -390,7 +565,17 @@ begin
 			DMA_RUN <= '0';
 			CDC_HRD <= '0';
 		elsif rising_edge(CLK) then
-			if EN = '1' then
+			if SS_APPLY = '1' then
+				HD <= SS_SHADOW(5)(15 downto 0);
+				DSR <= SS_SHADOW(0)(10);
+				EDT <= SS_SHADOW(0)(11);
+				DS <= DS_IDLE;
+				DMA_ADDR <= SS_SHADOW(6)(17 downto 0);
+				DMA_DAT <= (others => '0');
+				DMA_BYTE <= '0';
+				DMA_RUN <= '0';
+				CDC_HRD <= '0';
+			elsif EN = '1' then
 				if DMA_ADDR_SET = '1' then
 					DMA_ADDR <= DMAA(18 downto 3) & "00";
 					EDT <= '0';
@@ -519,185 +704,209 @@ begin
 			CC <= (others => (others => '0'));
 			INT_PEND(2) <= '0';
 			MAIN_CPU_CDC_READ <= '0';
-			
+
 		elsif rising_edge(CLK) then
-			MAIN_RST_EXEC <= '0';
-			
-			OLD_IEN2 <= IEN(2);
-			if INT_ACK(2) = '1' and INT_PEND(2) = '1' then
-				INT_PEND(2) <= '0';
-				IFL2 <= '0';
-			elsif IEN(2) = '0' and OLD_IEN2 = '1' and INT_PEND(2) = '1' then
-				INT_PEND(2) <= '0';
-				IFL2 <= '0';
-			end if;
-			
-			if MAIN_CPU_CDC_READ = '1' and DS = DS_IDLE then
-				MAIN_CPU_CDC_READ <= '0';
-			end if;
-			
-			if M68K_GA_SEL = '1' and M68K_REG_DTACK_N = '1' then
-				if EXT_RNW = '0' then
-					case EXT_VA(5 downto 1) is
-						when "00000" =>			--$A12000 BUSREQ,RESET
-							if EXT_LDS_N = '0' then
-								SRES <= EXT_VDI(0);
-								SBRQ <= EXT_VDI(1);
-								MAIN_RST_EXEC <= not EXT_VDI(0);
-							end if;
-							if EXT_UDS_N = '0' then
-								if EXT_VDI(8) = '1' and IEN(2) = '1' then
-									INT_PEND(2) <= '1';
-									IFL2 <= '1';
-								end if;
-							end if;
-						when "00001" =>			--$A12002 Memory mode/Write protect
-							if EXT_LDS_N = '0' then
-								BK <= EXT_VDI(7 downto 6);
-							end if;
-							if EXT_UDS_N = '0' then
-								WP <= EXT_VDI(15 downto 8);
-							end if;
-						when "00010" => null;	--$A12004 CDC mode (read only)
-						when "00011" =>			--$A12006 H-INT vector
-							if EXT_LDS_N = '0' then
-								HIB(7 downto 0) <= EXT_VDI(7 downto 0);
-							end if;
-							if EXT_UDS_N = '0' then
-								HIB(15 downto 8) <= EXT_VDI(15 downto 8);
-							end if;
-						when "00100" => null;	--$A12008 CDC host data (read only)
-						when "00101" => null;	--$A1200A Reserved
-						when "00110" => null;	--$A1200C Stop watch (read only)
-						when "00111" =>			--$A1200E Communication flag
-							CFM <= EXT_VDI(15 downto 8);
-						when "01000" =>			--$A12010 Communication command 0
-							if EXT_LDS_N = '0' then
-								CC(0)(7 downto 0) <= EXT_VDI(7 downto 0);
-							end if;
-							if EXT_UDS_N = '0' then
-								CC(0)(15 downto 8) <= EXT_VDI(15 downto 8);
-							end if;
-						when "01001" =>			--$A12012 Communication command 1
-							if EXT_LDS_N = '0' then
-								CC(1)(7 downto 0) <= EXT_VDI(7 downto 0);
-							end if;
-							if EXT_UDS_N = '0' then
-								CC(1)(15 downto 8) <= EXT_VDI(15 downto 8);
-							end if;
-						when "01010" =>			--$A12014 Communication command 2
-							if EXT_LDS_N = '0' then
-								CC(2)(7 downto 0) <= EXT_VDI(7 downto 0);
-							end if;
-							if EXT_UDS_N = '0' then
-								CC(2)(15 downto 8) <= EXT_VDI(15 downto 8);
-							end if;
-						when "01011" =>			--$A12016 Communication command 3
-							if EXT_LDS_N = '0' then
-								CC(3)(7 downto 0) <= EXT_VDI(7 downto 0);
-							end if;
-							if EXT_UDS_N = '0' then
-								CC(3)(15 downto 8) <= EXT_VDI(15 downto 8);
-							end if;
-						when "01100" =>			--$A12018 Communication command 4
-							if EXT_LDS_N = '0' then
-								CC(4)(7 downto 0) <= EXT_VDI(7 downto 0);
-							end if;
-							if EXT_UDS_N = '0' then
-								CC(4)(15 downto 8) <= EXT_VDI(15 downto 8);
-							end if;
-						when "01101" =>			--$A1201A Communication command 5
-							if EXT_LDS_N = '0' then
-								CC(5)(7 downto 0) <= EXT_VDI(7 downto 0);
-							end if;
-							if EXT_UDS_N = '0' then
-								CC(5)(15 downto 8) <= EXT_VDI(15 downto 8);
-							end if;
-						when "01110" =>			--$A1201C Communication command 6
-							if EXT_LDS_N = '0' then
-								CC(6)(7 downto 0) <= EXT_VDI(7 downto 0);
-							end if;
-							if EXT_UDS_N = '0' then
-								CC(6)(15 downto 8) <= EXT_VDI(15 downto 8);
-							end if;
-						when "01111" =>			--$A1201E Communication command 7
-							if EXT_LDS_N = '0' then
-								CC(7)(7 downto 0) <= EXT_VDI(7 downto 0);
-							end if;
-							if EXT_UDS_N = '0' then
-								CC(7)(15 downto 8) <= EXT_VDI(15 downto 8);
-							end if;
-						when "10000" => null;	--$A12020 Communication status 0 (read only)
-						when "10001" => null;	--$A12022 Communication status 1 (read only)
-						when "10010" => null;	--$A12024 Communication status 2 (read only)
-						when "10011" => null;	--$A12026 Communication status 3 (read only)
-						when "10100" => null;	--$A12028 Communication status 4 (read only)
-						when "10101" => null;	--$A1202A Communication status 5 (read only)
-						when "10110" => null;	--$A1202C Communication status 6 (read only)
-						when "10111" => null;	--$A1202E Communication status 7 (read only)
-						when others => null;
-					end case;
-				else
-					case EXT_VA(5 downto 1) is
-						when "00000" =>			--$A12000 BUSREQ,RESET
-							M68K_REG_DO <= IEN(2) & "000000" & IFL2 & "000000" & SBRQ & SRES;
-						when "00001" =>			--$A12002 Memory mode/Write protect
-							M68K_REG_DO(15 downto 2) <= WP & BK & "000" & MODE;
-							if MODE = '0' then
-								M68K_REG_DO(1 downto 0) <= DMNA0 & RET0;
-							else
-								M68K_REG_DO(1 downto 0) <= DMNA1 & RET1;
-							end if;
-						when "00010" =>			--$A12004 CDC mode
-							M68K_REG_DO <= EDT & DSR & "000" & DD & x"00";
-						when "00011" =>			--$A12006 H-INT vector
-							M68K_REG_DO <= HIB;
-						when "00100" =>			--$A12008 CDC host data
-							M68K_REG_DO <= HD;
-							MAIN_CPU_CDC_READ <= '1';
-						when "00101" => null;	--$A1200A reserved
-						when "00110" =>			--$A1200C Stop watch
-							M68K_REG_DO <= "0000" & SW;
-						when "00111" =>			--$A1200E Communication flag
-							M68K_REG_DO <= CFM & CFS;
-						when "01000" =>			--$A12010 Communication command 0
-							M68K_REG_DO <= CC(0);
-						when "01001" =>			--$A12012 Communication command 1
-							M68K_REG_DO <= CC(1);
-						when "01010" =>			--$A12014 Communication command 2
-							M68K_REG_DO <= CC(2);
-						when "01011" =>			--$A12016 Communication command 3
-							M68K_REG_DO <= CC(3);
-						when "01100" =>			--$A12018 Communication command 4
-							M68K_REG_DO <= CC(4);
-						when "01101" =>			--$A1201A Communication command 5
-							M68K_REG_DO <= CC(5);
-						when "01110" =>			--$A1201C Communication command 6
-							M68K_REG_DO <= CC(6);
-						when "01111" =>			--$A1201E Communication command 7
-							M68K_REG_DO <= CC(7);
-						when "10000" =>			--$A12020 Communication status 0
-							M68K_REG_DO <= CS(0);
-						when "10001" =>			--$A12022 Communication status 1
-							M68K_REG_DO <= CS(1);
-						when "10010" =>			--$A12024 Communication status 2
-							M68K_REG_DO <= CS(2);
-						when "10011" =>			--$A12026 Communication status 3
-							M68K_REG_DO <= CS(3);
-						when "10100" =>			--$A12028 Communication status 4
-							M68K_REG_DO <= CS(4);
-						when "10101" =>			--$A1202A Communication status 5
-							M68K_REG_DO <= CS(5);
-						when "10110" =>			--$A1202C Communication status 6
-							M68K_REG_DO <= CS(6);
-						when "10111" =>			--$A1202E Communication status 7
-							M68K_REG_DO <= CS(7);
-						when others => null;
-					end case;
-				end if;
-				M68K_REG_DTACK_N <= '0';
-			elsif M68K_REG_DTACK_N = '0' and EXT_AS_N = '1' then
+			if SS_APPLY = '1' then
 				M68K_REG_DTACK_N <= '1';
+				M68K_REG_DO <= (others => '0');
+				MAIN_RST_EXEC <= '0';
+				SRES <= SS_SHADOW(0)(3);
+				SBRQ <= SS_SHADOW(0)(4);
+				IFL2 <= SS_SHADOW(0)(5);
+				BK <= SS_SHADOW(1)(11 downto 10);
+				WP <= SS_SHADOW(2)(7 downto 0);
+				HIB <= SS_SHADOW(4)(15 downto 0);
+				CFM <= SS_SHADOW(4)(23 downto 16);
+				CC(0) <= SS_SHADOW(14)(15 downto 0);
+				CC(1) <= SS_SHADOW(14)(31 downto 16);
+				CC(2) <= SS_SHADOW(15)(15 downto 0);
+				CC(3) <= SS_SHADOW(15)(31 downto 16);
+				CC(4) <= SS_SHADOW(16)(15 downto 0);
+				CC(5) <= SS_SHADOW(16)(31 downto 16);
+				CC(6) <= SS_SHADOW(17)(15 downto 0);
+				CC(7) <= SS_SHADOW(17)(31 downto 16);
+				INT_PEND(2) <= SS_SHADOW(1)(22);
+				MAIN_CPU_CDC_READ <= SS_SHADOW(0)(19);
+				OLD_IEN2 <= SS_SHADOW(0)(13);
+			else
+				MAIN_RST_EXEC <= '0';
+
+				OLD_IEN2 <= IEN(2);
+				if INT_ACK(2) = '1' and INT_PEND(2) = '1' then
+					INT_PEND(2) <= '0';
+					IFL2 <= '0';
+				elsif IEN(2) = '0' and OLD_IEN2 = '1' and INT_PEND(2) = '1' then
+					INT_PEND(2) <= '0';
+					IFL2 <= '0';
+				end if;
+
+				if MAIN_CPU_CDC_READ = '1' and DS = DS_IDLE then
+					MAIN_CPU_CDC_READ <= '0';
+				end if;
+
+				if M68K_GA_SEL = '1' and M68K_REG_DTACK_N = '1' then
+					if EXT_RNW = '0' then
+						case EXT_VA(5 downto 1) is
+							when "00000" =>			--$A12000 BUSREQ,RESET
+								if EXT_LDS_N = '0' then
+									SRES <= EXT_VDI(0);
+									SBRQ <= EXT_VDI(1);
+									MAIN_RST_EXEC <= not EXT_VDI(0);
+								end if;
+								if EXT_UDS_N = '0' then
+									if EXT_VDI(8) = '1' and IEN(2) = '1' then
+										INT_PEND(2) <= '1';
+										IFL2 <= '1';
+									end if;
+								end if;
+							when "00001" =>			--$A12002 Memory mode/Write protect
+								if EXT_LDS_N = '0' then
+									BK <= EXT_VDI(7 downto 6);
+								end if;
+								if EXT_UDS_N = '0' then
+									WP <= EXT_VDI(15 downto 8);
+								end if;
+							when "00010" => null;	--$A12004 CDC mode (read only)
+							when "00011" =>			--$A12006 H-INT vector
+								if EXT_LDS_N = '0' then
+									HIB(7 downto 0) <= EXT_VDI(7 downto 0);
+								end if;
+								if EXT_UDS_N = '0' then
+									HIB(15 downto 8) <= EXT_VDI(15 downto 8);
+								end if;
+							when "00100" => null;	--$A12008 CDC host data (read only)
+							when "00101" => null;	--$A1200A Reserved
+							when "00110" => null;	--$A1200C Stop watch (read only)
+							when "00111" =>			--$A1200E Communication flag
+								CFM <= EXT_VDI(15 downto 8);
+							when "01000" =>			--$A12010 Communication command 0
+								if EXT_LDS_N = '0' then
+									CC(0)(7 downto 0) <= EXT_VDI(7 downto 0);
+								end if;
+								if EXT_UDS_N = '0' then
+									CC(0)(15 downto 8) <= EXT_VDI(15 downto 8);
+								end if;
+							when "01001" =>			--$A12012 Communication command 1
+								if EXT_LDS_N = '0' then
+									CC(1)(7 downto 0) <= EXT_VDI(7 downto 0);
+								end if;
+								if EXT_UDS_N = '0' then
+									CC(1)(15 downto 8) <= EXT_VDI(15 downto 8);
+								end if;
+							when "01010" =>			--$A12014 Communication command 2
+								if EXT_LDS_N = '0' then
+									CC(2)(7 downto 0) <= EXT_VDI(7 downto 0);
+								end if;
+								if EXT_UDS_N = '0' then
+									CC(2)(15 downto 8) <= EXT_VDI(15 downto 8);
+								end if;
+							when "01011" =>			--$A12016 Communication command 3
+								if EXT_LDS_N = '0' then
+									CC(3)(7 downto 0) <= EXT_VDI(7 downto 0);
+								end if;
+								if EXT_UDS_N = '0' then
+									CC(3)(15 downto 8) <= EXT_VDI(15 downto 8);
+								end if;
+							when "01100" =>			--$A12018 Communication command 4
+								if EXT_LDS_N = '0' then
+									CC(4)(7 downto 0) <= EXT_VDI(7 downto 0);
+								end if;
+								if EXT_UDS_N = '0' then
+									CC(4)(15 downto 8) <= EXT_VDI(15 downto 8);
+								end if;
+							when "01101" =>			--$A1201A Communication command 5
+								if EXT_LDS_N = '0' then
+									CC(5)(7 downto 0) <= EXT_VDI(7 downto 0);
+								end if;
+								if EXT_UDS_N = '0' then
+									CC(5)(15 downto 8) <= EXT_VDI(15 downto 8);
+								end if;
+							when "01110" =>			--$A1201C Communication command 6
+								if EXT_LDS_N = '0' then
+									CC(6)(7 downto 0) <= EXT_VDI(7 downto 0);
+								end if;
+								if EXT_UDS_N = '0' then
+									CC(6)(15 downto 8) <= EXT_VDI(15 downto 8);
+								end if;
+							when "01111" =>			--$A1201E Communication command 7
+								if EXT_LDS_N = '0' then
+									CC(7)(7 downto 0) <= EXT_VDI(7 downto 0);
+								end if;
+								if EXT_UDS_N = '0' then
+									CC(7)(15 downto 8) <= EXT_VDI(15 downto 8);
+								end if;
+							when "10000" => null;	--$A12020 Communication status 0 (read only)
+							when "10001" => null;	--$A12022 Communication status 1 (read only)
+							when "10010" => null;	--$A12024 Communication status 2 (read only)
+							when "10011" => null;	--$A12026 Communication status 3 (read only)
+							when "10100" => null;	--$A12028 Communication status 4 (read only)
+							when "10101" => null;	--$A1202A Communication status 5 (read only)
+							when "10110" => null;	--$A1202C Communication status 6 (read only)
+							when "10111" => null;	--$A1202E Communication status 7 (read only)
+							when others => null;
+						end case;
+					else
+						case EXT_VA(5 downto 1) is
+							when "00000" =>			--$A12000 BUSREQ,RESET
+								M68K_REG_DO <= IEN(2) & "000000" & IFL2 & "000000" & SBRQ & SRES;
+							when "00001" =>			--$A12002 Memory mode/Write protect
+								M68K_REG_DO(15 downto 2) <= WP & BK & "000" & MODE;
+								if MODE = '0' then
+									M68K_REG_DO(1 downto 0) <= DMNA0 & RET0;
+								else
+									M68K_REG_DO(1 downto 0) <= DMNA1 & RET1;
+								end if;
+							when "00010" =>			--$A12004 CDC mode
+								M68K_REG_DO <= EDT & DSR & "000" & DD & x"00";
+							when "00011" =>			--$A12006 H-INT vector
+								M68K_REG_DO <= HIB;
+							when "00100" =>			--$A12008 CDC host data
+								M68K_REG_DO <= HD;
+								MAIN_CPU_CDC_READ <= '1';
+							when "00101" => null;	--$A1200A reserved
+							when "00110" =>			--$A1200C Stop watch
+								M68K_REG_DO <= "0000" & SW;
+							when "00111" =>			--$A1200E Communication flag
+								M68K_REG_DO <= CFM & CFS;
+							when "01000" =>			--$A12010 Communication command 0
+								M68K_REG_DO <= CC(0);
+							when "01001" =>			--$A12012 Communication command 1
+								M68K_REG_DO <= CC(1);
+							when "01010" =>			--$A12014 Communication command 2
+								M68K_REG_DO <= CC(2);
+							when "01011" =>			--$A12016 Communication command 3
+								M68K_REG_DO <= CC(3);
+							when "01100" =>			--$A12018 Communication command 4
+								M68K_REG_DO <= CC(4);
+							when "01101" =>			--$A1201A Communication command 5
+								M68K_REG_DO <= CC(5);
+							when "01110" =>			--$A1201C Communication command 6
+								M68K_REG_DO <= CC(6);
+							when "01111" =>			--$A1201E Communication command 7
+								M68K_REG_DO <= CC(7);
+							when "10000" =>			--$A12020 Communication status 0
+								M68K_REG_DO <= CS(0);
+							when "10001" =>			--$A12022 Communication status 1
+								M68K_REG_DO <= CS(1);
+							when "10010" =>			--$A12024 Communication status 2
+								M68K_REG_DO <= CS(2);
+							when "10011" =>			--$A12026 Communication status 3
+								M68K_REG_DO <= CS(3);
+							when "10100" =>			--$A12028 Communication status 4
+								M68K_REG_DO <= CS(4);
+							when "10101" =>			--$A1202A Communication status 5
+								M68K_REG_DO <= CS(5);
+							when "10110" =>			--$A1202C Communication status 6
+								M68K_REG_DO <= CS(6);
+							when "10111" =>			--$A1202E Communication status 7
+								M68K_REG_DO <= CS(7);
+							when others => null;
+						end case;
+					end if;
+					M68K_REG_DTACK_N <= '0';
+				elsif M68K_REG_DTACK_N = '0' and EXT_AS_N = '1' then
+					M68K_REG_DTACK_N <= '1';
+				end if;
 			end if;
 		end if;
 	end process;
@@ -825,7 +1034,72 @@ begin
 			
 			CDD_STAT_RECEIVED <= '0';
 		elsif rising_edge(CLK) then
-			if EN = '1' then
+			if SS_APPLY = '1' then
+				S68K_REG_DTACK_N <= '1';
+				S68K_REG_DO <= (others => '0');
+				RES0 <= SS_SHADOW(0)(0);
+				LEDG <= SS_SHADOW(0)(2);
+				LEDR <= SS_SHADOW(0)(1);
+				PM <= SS_SHADOW(1)(9 downto 8);
+				CFS <= SS_SHADOW(4)(31 downto 24);
+				CS(0) <= SS_SHADOW(18)(15 downto 0);
+				CS(1) <= SS_SHADOW(18)(31 downto 16);
+				CS(2) <= SS_SHADOW(19)(15 downto 0);
+				CS(3) <= SS_SHADOW(19)(31 downto 16);
+				CS(4) <= SS_SHADOW(20)(15 downto 0);
+				CS(5) <= SS_SHADOW(20)(31 downto 16);
+				CS(6) <= SS_SHADOW(21)(15 downto 0);
+				CS(7) <= SS_SHADOW(21)(31 downto 16);
+				IEN <= SS_SHADOW(1)(20 downto 15);
+				DD <= SS_SHADOW(1)(14 downto 12);
+				DMAA <= SS_SHADOW(5)(31 downto 16);
+				HOCK <= SS_SHADOW(1)(28);
+				RPT <= SS_SHADOW(1)(29);
+				STS <= SS_SHADOW(1)(30);
+				SMS <= SS_SHADOW(1)(31);
+				GRON <= SS_SHADOW(2)(16);
+				SMBA <= SS_SHADOW(8)(10 downto 0);
+				VCS <= SS_SHADOW(2)(21 downto 17);
+				ISA <= SS_SHADOW(8)(23 downto 11);
+				LN <= SS_SHADOW(2)(24 downto 22);
+				DOT <= SS_SHADOW(2)(27 downto 25);
+				HW <= SS_SHADOW(6)(26 downto 18);
+				VW <= SS_SHADOW(7)(7 downto 0);
+				TVBA <= SS_SHADOW(7)(30 downto 16);
+				CDDS(31 downto 0) <= SS_SHADOW(10);
+				CDDS(39 downto 32) <= SS_SHADOW(11)(7 downto 0);
+				CDDC(31 downto 0) <= SS_SHADOW(12);
+				CDDC(39 downto 32) <= SS_SHADOW(13)(7 downto 0);
+				STA <= SS_SHADOW(8)(29 downto 24);
+				SAOR <= SS_SHADOW(2)(28);
+				for I in 0 to 31 loop
+					SBA(I * 2) <= SS_SHADOW(22 + I)(15 downto 0);
+					SBA((I * 2) + 1) <= SS_SHADOW(22 + I)(31 downto 16);
+				end loop;
+				SUB_RST_EXEC <= '0';
+				DMA_ADDR_SET <= '0';
+				VW_SET <= '0';
+				TM <= SS_SHADOW(2)(15 downto 8);
+				TIME_CLK_CNT <= unsigned(SS_SHADOW(3)(16 downto 8));
+				TIMER <= unsigned(SS_SHADOW(3)(7 downto 0));
+				SUB_CPU_CDC_READ <= SS_SHADOW(0)(20);
+				CDD_SEND <= '0';
+				CDD_REC_OLD <= SS_SHADOW(0)(14);
+				OLD_CDC_INT_N <= SS_SHADOW(0)(18);
+				HOCK_OLD <= SS_SHADOW(0)(15);
+				CD_SC_WR_OLD <= SS_SHADOW(0)(16);
+				SW_CLR <= '0';
+				FD_WR <= '0';
+				INT_PEND(3) <= SS_SHADOW(1)(23);
+				INT_PEND(4) <= SS_SHADOW(1)(24);
+				INT_PEND(5) <= SS_SHADOW(1)(25);
+				INT_PEND(6) <= SS_SHADOW(1)(26);
+				CDD_STAT_RECEIVED <= SS_SHADOW(0)(17);
+				SC_CNT <= unsigned(SS_SHADOW(9)(21 downto 16));
+				SB <= SS_SHADOW(9)(15 downto 0);
+				SC0 <= SS_SHADOW(1)(3 downto 0);
+				SC1 <= SS_SHADOW(1)(7 downto 4);
+			elsif EN = '1' then
 				SUB_RST_EXEC <= '0';
 				if MCD_RST_DONE = '1' then
 					RES0 <= '1';
@@ -1990,7 +2264,23 @@ begin
 			GFX_SEL <= '0';
 			GFX_RMW <= '0';
 		elsif rising_edge(CLK) then
-			if EN = '1' then
+			if SS_APPLY = '1' then
+				OLD_IEN1 <= SS_SHADOW(0)(12);
+				INT_PEND(1) <= SS_SHADOW(1)(21);
+				VDOTS <= SS_SHADOW(7)(15 downto 8);
+				GS <= GS_IDLE;
+				VA <= (others => '0');
+				IMAGE_DOT <= (others => '0');
+				IMAGE_LINE <= (others => '0');
+				IMAGE_CELL <= (others => '0');
+				HDOTS <= (others => '0');
+				GFX_WORDRAM_DO <= (others => '0');
+				GFX_DO <= (others => '0');
+				WR_GFX_RUN <= '0';
+				GFX_ADDR <= (others => '0');
+				GFX_SEL <= '0';
+				GFX_RMW <= '0';
+			elsif EN = '1' then
 				OLD_IEN1 <= IEN(1);
 				if INT_ACK(1) = '1' and INT_PEND(1) = '1' then
 					INT_PEND(1) <= '0';
@@ -2509,7 +2799,7 @@ begin
 				  
 	BROM_N <= '0' when EXT_ROM_N = '0' and EXT_VA(17) = '0' and EXT_VA(16 downto 2) /= "0"&x"007"&"00" and EXT_ASEL_N = '0' else '1';
 	CDC_N <= '0' when S68K_A(19 downto 2) = x"F800" & "01" and S68K_LDS_N = '0' and S68K_AS_N = '0' else '1';
-	
+
 	CLWE_N <= S68K_LDS_N or S68K_RNW;
 	CUWE_N <= S68K_UDS_N or S68K_RNW;
 	COE_N <= (S68K_LDS_N and S68K_UDS_N) or not S68K_RNW;
@@ -2527,5 +2817,5 @@ begin
 	                      S68K_AS_N = '1' and
 	                      CDC_HRD = '0'
 	              else '0';
-	
+
 end rtl;

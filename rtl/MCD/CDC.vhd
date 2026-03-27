@@ -26,12 +26,18 @@ entity CDC is
 		
 		CD_DI			: in std_logic_vector(15 downto 0);
 		CD_WR			: in std_logic;
-		
+
 		RAM_A_WR   	: out std_logic_vector(15 downto 1);
 		RAM_A_RD   	: out std_logic_vector(15 downto 0);
 		RAM_DI		: in std_logic_vector(7 downto 0);
 		RAM_DO		: out std_logic_vector(15 downto 0);
-		RAM_WE		: out std_logic
+		RAM_WE		: out std_logic;
+		SS_REQ      : in std_logic := '0';
+		SS_WR       : in std_logic := '0';
+		SS_ADDR     : in std_logic_vector(3 downto 0) := (others => '0');
+		SS_DIN      : in std_logic_vector(31 downto 0) := (others => '0');
+		SS_DOUT     : out std_logic_vector(31 downto 0);
+		SS_ACK      : out std_logic
 	);
 end CDC;
 
@@ -106,6 +112,7 @@ architecture rtl of CDC is
 	signal AR : std_logic_vector(3 downto 0);
 	signal IFCTRL : std_logic_vector(7 downto 0);
 	signal IFSTAT : std_logic_vector(7 downto 0) := x"FF";
+	signal DO_I : std_logic_vector(7 downto 0);
 	signal DBC : std_logic_vector(15 downto 0);
 	signal DAC : std_logic_vector(15 downto 0);
 	signal HEAD0 : std_logic_vector(7 downto 0);
@@ -139,6 +146,31 @@ architecture rtl of CDC is
 		TS_SEND_WAIT,
 		TS_SEND
 	);
+
+	function ts_to_slv(ts : TransferState_t) return std_logic_vector is
+	begin
+		case ts is
+			when TS_IDLE      => return "000";
+			when TS_WAIT      => return "001";
+			when TS_RAM_READ  => return "010";
+			when TS_FIFO      => return "011";
+			when TS_SEND_WAIT => return "100";
+			when others       => return "101";
+		end case;
+	end function;
+
+	function slv_to_ts(v : std_logic_vector(2 downto 0)) return TransferState_t is
+	begin
+		case v is
+			when "000" => return TS_IDLE;
+			when "001" => return TS_WAIT;
+			when "010" => return TS_RAM_READ;
+			when "011" => return TS_FIFO;
+			when "100" => return TS_SEND_WAIT;
+			when others => return TS_SEND;
+		end case;
+	end function;
+
 	signal TS : TransferState_t;
 	signal TRANS_RUN : std_logic;
 	signal FIFO_DATA0 : std_logic_vector(8 downto 0);
@@ -146,6 +178,8 @@ architecture rtl of CDC is
 --	signal FIFO_RD_POS : std_logic;
 --	signal FIFO_WR_POS : std_logic;
 	signal DT_EN : std_logic;
+	signal DTEN_N_I : std_logic;
+	signal WAIT_N_I : std_logic;
 	
 	signal CD_WR_OLD : std_logic;
 	signal WORD_CNT : unsigned(10 downto 0);
@@ -157,6 +191,15 @@ architecture rtl of CDC is
 	signal DEC_WR_EN : std_logic;
 	signal DEC_HEAD01 : std_logic_vector(15 downto 0);
 	signal DEC_HEAD23 : std_logic_vector(15 downto 0);
+
+	constant CDC_SS_WORDS : integer := 10;
+	constant CDC_SS_CTRL_ADDR : std_logic_vector(3 downto 0) := x"F";
+	type ss_words_t is array(0 to CDC_SS_WORDS - 1) of std_logic_vector(31 downto 0);
+	signal SS_SHADOW : ss_words_t := (others => (others => '0'));
+	signal SS_REQ_D : std_logic := '0';
+	signal SS_ADDR_D : std_logic_vector(3 downto 0) := (others => '0');
+	signal SS_COMMIT_PENDING : std_logic := '0';
+	signal SS_APPLY : std_logic;
 	
 --	signal DECI_WAIT_CNT : unsigned(15 downto 0);
 --	signal DECI_SET : std_logic;
@@ -165,14 +208,116 @@ architecture rtl of CDC is
 begin
 
 	EN <= ENABLE and (CLKEN_N or CLKEN_P);
-	
+	DO <= DO_I;
+	DTEN_N <= DTEN_N_I;
+	WAIT_N <= WAIT_N_I;
+	SS_APPLY <= SS_COMMIT_PENDING;
+	SS_ACK <= SS_REQ_D;
+
+	process(RESET_N, CLK)
+	begin
+		if RESET_N = '0' then
+			SS_REQ_D <= '0';
+			SS_ADDR_D <= (others => '0');
+			SS_COMMIT_PENDING <= '0';
+			SS_SHADOW <= (others => (others => '0'));
+		elsif rising_edge(CLK) then
+			SS_REQ_D <= SS_REQ;
+			if SS_REQ = '1' then
+				SS_ADDR_D <= SS_ADDR;
+			end if;
+
+			if SS_REQ = '1' and SS_WR = '1' then
+				case SS_ADDR is
+					when x"0" => SS_SHADOW(0) <= SS_DIN;
+					when x"1" => SS_SHADOW(1) <= SS_DIN;
+					when x"2" => SS_SHADOW(2) <= SS_DIN;
+					when x"3" => SS_SHADOW(3) <= SS_DIN;
+					when x"4" => SS_SHADOW(4) <= SS_DIN;
+					when x"5" => SS_SHADOW(5) <= SS_DIN;
+					when x"6" => SS_SHADOW(6) <= SS_DIN;
+					when x"7" => SS_SHADOW(7) <= SS_DIN;
+					when x"8" => SS_SHADOW(8) <= SS_DIN;
+					when x"9" => SS_SHADOW(9) <= SS_DIN;
+					when others =>
+						if SS_ADDR = CDC_SS_CTRL_ADDR and SS_DIN(31) = '1' then
+							SS_COMMIT_PENDING <= '1';
+						end if;
+				end case;
+			end if;
+
+			if SS_APPLY = '1' then
+				SS_COMMIT_PENDING <= '0';
+			end if;
+		end if;
+	end process;
+
+	process(SS_ADDR_D, AR, OLD_WR_N, OLD_RD_N, DT_EN, CD_WR_OLD, DEC_WR_EN, TS, DTEN_N_I, WAIT_N_I, FIFO_DATA0,
+	        DO_I, IFCTRL, IFSTAT, CTRL0, CTRL1, STAT0, STAT2, STAT3, HEAD0, HEAD1, HEAD2, HEAD3, DBC, DAC,
+	        PT, WA, DEC_HEAD01, DEC_HEAD23, DEC_DAT, WORD_CNT, RAM_POS, DEC_POS)
+	begin
+		SS_DOUT <= (others => '0');
+		case SS_ADDR_D is
+			when x"0" =>
+				SS_DOUT(3 downto 0) <= AR;
+				SS_DOUT(4) <= OLD_WR_N;
+				SS_DOUT(5) <= OLD_RD_N;
+				SS_DOUT(6) <= DT_EN;
+				SS_DOUT(7) <= CD_WR_OLD;
+				SS_DOUT(8) <= DEC_WR_EN;
+				SS_DOUT(11 downto 9) <= ts_to_slv(TS);
+				SS_DOUT(12) <= DTEN_N_I;
+				SS_DOUT(13) <= WAIT_N_I;
+				SS_DOUT(14) <= FIFO_DATA0(8);
+				SS_DOUT(23 downto 16) <= DO_I;
+			when x"1" =>
+				SS_DOUT(7 downto 0) <= IFCTRL;
+				SS_DOUT(15 downto 8) <= IFSTAT;
+				SS_DOUT(23 downto 16) <= CTRL0;
+				SS_DOUT(31 downto 24) <= CTRL1;
+			when x"2" =>
+				SS_DOUT(7 downto 0) <= STAT0;
+				SS_DOUT(15 downto 8) <= STAT2;
+				SS_DOUT(23 downto 16) <= STAT3;
+				SS_DOUT(31 downto 24) <= HEAD0;
+			when x"3" =>
+				SS_DOUT(7 downto 0) <= HEAD1;
+				SS_DOUT(15 downto 8) <= HEAD2;
+				SS_DOUT(23 downto 16) <= HEAD3;
+			when x"4" =>
+				SS_DOUT(15 downto 0) <= DBC;
+				SS_DOUT(31 downto 16) <= DAC;
+			when x"5" =>
+				SS_DOUT(15 downto 0) <= PT;
+				SS_DOUT(31 downto 16) <= WA;
+			when x"6" =>
+				SS_DOUT(15 downto 0) <= DEC_HEAD01;
+				SS_DOUT(31 downto 16) <= DEC_HEAD23;
+			when x"7" =>
+				SS_DOUT(15 downto 0) <= DEC_DAT;
+				SS_DOUT(23 downto 16) <= FIFO_DATA0(7 downto 0);
+			when x"8" =>
+				SS_DOUT(10 downto 0) <= std_logic_vector(WORD_CNT);
+				SS_DOUT(23 downto 12) <= std_logic_vector(RAM_POS);
+			when x"9" =>
+				SS_DOUT(11 downto 0) <= std_logic_vector(DEC_POS);
+			when others =>
+				if SS_ADDR_D = CDC_SS_CTRL_ADDR then
+					SS_DOUT <= std_logic_vector(to_unsigned(CDC_SS_WORDS, 32));
+				end if;
+		end case;
+	end process;
+
 	process( RESET_N, CLK )
 	begin
 		if RESET_N = '0' then
 			OLD_WR_N <= '1';
 			OLD_RD_N <= '1';
 		elsif rising_edge(CLK) then
-			if EN = '1' then
+			if SS_APPLY = '1' then
+				OLD_WR_N <= SS_SHADOW(0)(4);
+				OLD_RD_N <= SS_SHADOW(0)(5);
+			elsif EN = '1' then
 				OLD_WR_N <= WR_N;
 				OLD_RD_N <= RD_N;
 			end if;
@@ -195,9 +340,17 @@ begin
 			STAT0(CRCOK) <= '0';
 			STAT2(MODE) <= '0';
 			STAT2(NOCOR) <= '0';
-			DO <= (others => '0');
+			DO_I <= (others => '0');
 		elsif rising_edge(CLK) then
-			if EN = '1' then
+			if SS_APPLY = '1' then
+				AR <= SS_SHADOW(0)(3 downto 0);
+				IFCTRL <= SS_SHADOW(1)(7 downto 0);
+				CTRL0 <= SS_SHADOW(1)(23 downto 16);
+				CTRL1 <= SS_SHADOW(1)(31 downto 24);
+				STAT0 <= SS_SHADOW(2)(7 downto 0);
+				STAT2 <= SS_SHADOW(2)(15 downto 8);
+				DO_I <= SS_SHADOW(0)(23 downto 16);
+			elsif EN = '1' then
 				if CS_N = '0' and WR_F = '1' then
 					if RS = '0' then
 						AR <= DI(3 downto 0);
@@ -235,41 +388,41 @@ begin
 					end if;
 				elsif CS_N = '0' and RD_F = '1' then
 					if RS = '0' then
-						DO <= x"0" & AR;
+						DO_I <= x"0" & AR;
 					else
 						case AR is
 							when x"0" =>			--R0
 								
 							when x"1" =>			--R1 IFSTAT
-								DO <= IFSTAT;	
+								DO_I <= IFSTAT;
 							when x"2" =>			--R2 DBCL
-								DO <= DBC(7 downto 0);
+								DO_I <= DBC(7 downto 0);
 							when x"3" =>			--R3 DBCH
-								DO <= DBC(15 downto 8);
+								DO_I <= DBC(15 downto 8);
 							when x"4" =>			--R4 HEAD0
-								DO <= HEAD0;
+								DO_I <= HEAD0;
 							when x"5" =>			--R5 HEAD1
-								DO <= HEAD1;
+								DO_I <= HEAD1;
 							when x"6" =>			--R6 HEAD2
-								DO <= HEAD2;
+								DO_I <= HEAD2;
 							when x"7" =>			--R6 HEAD3
-								DO <= HEAD3;
+								DO_I <= HEAD3;
 							when x"8" =>			--R8 PTL
-								DO <= PT(7 downto 0);
+								DO_I <= PT(7 downto 0);
 							when x"9" =>			--R9 PTH
-								DO <= PT(15 downto 8);
+								DO_I <= PT(15 downto 8);
 							when x"A" =>			--R10 WAL
-								DO <= WA(7 downto 0);
+								DO_I <= WA(7 downto 0);
 							when x"B" =>			--R11 WAH
-								DO <= WA(15 downto 8);
+								DO_I <= WA(15 downto 8);
 							when x"C" =>			--R12 STAT0
-								DO <= STAT0;
+								DO_I <= STAT0;
 							when x"D" =>			--R13 STAT1
-								DO <= STAT1;
+								DO_I <= STAT1;
 							when x"E" =>			--R14 STAT2
-								DO <= STAT2;
+								DO_I <= STAT2;
 							when x"F" =>			--R15 STAT3
-								DO <= STAT3;
+								DO_I <= STAT3;
 							when others => null;
 						end case;
 					end if;
@@ -309,7 +462,24 @@ begin
 --			DECI_WAIT_CNT <= (others => '0');
 		elsif rising_edge(CLK) then
 			DEC_WR <= '0';
-			if EN = '1' then
+			if SS_APPLY = '1' then
+				PT <= SS_SHADOW(5)(15 downto 0);
+				WA <= SS_SHADOW(5)(31 downto 16);
+				IFSTAT(DECI) <= SS_SHADOW(1)(8 + DECI);
+				STAT3 <= SS_SHADOW(2)(23 downto 16);
+				HEAD0 <= SS_SHADOW(2)(31 downto 24);
+				HEAD1 <= SS_SHADOW(3)(7 downto 0);
+				HEAD2 <= SS_SHADOW(3)(15 downto 8);
+				HEAD3 <= SS_SHADOW(3)(23 downto 16);
+				CD_WR_OLD <= SS_SHADOW(0)(7);
+				WORD_CNT <= unsigned(SS_SHADOW(8)(10 downto 0));
+				RAM_POS <= unsigned(SS_SHADOW(8)(23 downto 12));
+				DEC_POS <= unsigned(SS_SHADOW(9)(11 downto 0));
+				DEC_DAT <= SS_SHADOW(7)(15 downto 0);
+				DEC_WR_EN <= SS_SHADOW(0)(8);
+				DEC_HEAD01 <= SS_SHADOW(6)(15 downto 0);
+				DEC_HEAD23 <= SS_SHADOW(6)(31 downto 16);
+			elsif EN = '1' then
 				if REG_WR = '1' then
 					case AR is
 						when x"8" =>			--R8 WAL
@@ -410,7 +580,9 @@ begin
 --			OLD_HRD_N <= '1';
 			DT_EN <= '0';
 		elsif rising_edge(CLK) then
-			if EN = '1' then
+			if SS_APPLY = '1' then
+				DT_EN <= SS_SHADOW(0)(6);
+			elsif EN = '1' then
 				DT_EN <= not DT_EN;
 				if DT_EN = '1' then
 --					OLD_HRD_N <= HRD_N;
@@ -431,15 +603,26 @@ begin
 			IFSTAT(DTEN) <= '1';
 			IFSTAT(DTEI) <= '1';
 			IFSTAT(DTBSY) <= '1';
-			DTEN_N <= '1';
-			WAIT_N <= '0';
+			DTEN_N_I <= '1';
+			WAIT_N_I <= '0';
 			FIFO_DATA0 <= (others => '0');
 --			FIFO_DATA1 <= (others => '0');
 --			FIFO_WR_POS <= '0';
 --			FIFO_RD_POS <= '0';
 			
 		elsif rising_edge(CLK) then
-			if EN = '1' then
+			if SS_APPLY = '1' then
+				DBC <= SS_SHADOW(4)(15 downto 0);
+				DAC <= SS_SHADOW(4)(31 downto 16);
+				TS <= slv_to_ts(SS_SHADOW(0)(11 downto 9));
+				IFSTAT(DTEN) <= SS_SHADOW(1)(8 + DTEN);
+				IFSTAT(DTEI) <= SS_SHADOW(1)(8 + DTEI);
+				IFSTAT(DTBSY) <= SS_SHADOW(1)(8 + DTBSY);
+				DTEN_N_I <= SS_SHADOW(0)(12);
+				WAIT_N_I <= SS_SHADOW(0)(13);
+				FIFO_DATA0(8) <= SS_SHADOW(0)(14);
+				FIFO_DATA0(7 downto 0) <= SS_SHADOW(7)(23 downto 16);
+			elsif EN = '1' then
 				if REG_WR = '1' then
 					case AR is
 						when x"2" =>			--R2 DBCL
@@ -470,7 +653,7 @@ begin
 					IFSTAT(DTBSY) <= '1';
 					IFSTAT(DTEN) <= '1';
 					IFSTAT(DTEI) <= '1';
-					DTEN_N <= '1';
+					DTEN_N_I <= '1';
 					
 --					FIFO_RD_POS <= '0';
 					FIFO_DATA0(8) <= '0';
@@ -493,7 +676,7 @@ begin
 					case TS is
 						when TS_IDLE =>
 							if IFSTAT(DTBSY) = '0' then
-								WAIT_N <= '1';
+								WAIT_N_I <= '1';
 								TS <= TS_WAIT;
 							end if;
 							
@@ -516,7 +699,7 @@ begin
 								FIFO_DATA0 <= "1" & RAM_DI;
 								if IFSTAT(DTEN) = '1' then
 									IFSTAT(DTEN) <= '0';
-									DTEN_N <= '0';
+									DTEN_N_I <= '0';
 								end if;
 --							else
 --								FIFO_DATA1 <= "1" & RAM_DI;
@@ -526,13 +709,13 @@ begin
 							
 						when TS_SEND_WAIT =>
 							if HRD_N = '0' then
-								WAIT_N <= '0';
+								WAIT_N_I <= '0';
 								TS <= TS_SEND;
 							end if;
 						
 						when TS_SEND =>
 							if HRD_N = '1' then
-								WAIT_N <= '1';
+								WAIT_N_I <= '1';
 								
 								DBC(11 downto 0) <= std_logic_vector( unsigned(DBC(11 downto 0)) - 1 );
 --								FIFO_RD_POS <= not FIFO_RD_POS;
@@ -546,7 +729,7 @@ begin
 									IFSTAT(DTEN) <= '1';
 									IFSTAT(DTBSY) <= '1';
 									IFSTAT(DTEI) <= '0';
-									DTEN_N <= '1';
+									DTEN_N_I <= '1';
 									DBC(15 downto 12) <= "1111";
 									TS <= TS_IDLE;
 								else
@@ -593,4 +776,4 @@ begin
 	INT_N <= (IFSTAT(DTEI) or not IFCTRL(DTEIEN)) and (IFSTAT(DECI) or not IFCTRL(DECIEN));
 	
 end rtl;
-	
+

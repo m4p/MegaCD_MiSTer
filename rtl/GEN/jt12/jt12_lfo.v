@@ -65,11 +65,14 @@ module jt12_lfo(
 	input			 	rst,
 	input			 	clk,
 	input				clk_en,
+	input				ss_apply,
 	input				zero,
 	input				lfo_rst,
 	input				lfo_en,
 	input		[2:0]	lfo_freq,
-	output	reg	[6:0]	lfo_mod		// 7-bit width according to spritesmind.net
+	output	reg	[6:0]	lfo_mod,		// 7-bit width according to spritesmind.net
+	input		[13:0]	ss_state_in,
+	output		[13:0]	ss_state_out
 );
 
 reg [6:0] cnt, limit;
@@ -89,6 +92,8 @@ always @(*)
 always @(posedge clk) 
 	if( rst || !lfo_en )
 		{ lfo_mod, cnt } <= 14'd0;
+	else if( ss_apply )
+		{ lfo_mod, cnt } <= ss_state_in;
 	else if( clk_en && zero) begin
 		if( cnt == limit ) begin
 			cnt <= 7'd0;
@@ -98,5 +103,7 @@ always @(posedge clk)
 			cnt <= cnt + 1'b1;
 		end
 	end
+
+assign ss_state_out = { lfo_mod, cnt };
 	
 endmodule
