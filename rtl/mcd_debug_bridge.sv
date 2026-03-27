@@ -234,20 +234,8 @@ endfunction
 function automatic [7:0] staged_window_byte(input [4:0] index);
 	reg [15:0] window_word;
 	begin
-		window_word = pack_window_word(index[4:1]);
+		window_word = data_window >> {index[4:1], 4'b0000};
 		staged_window_byte = index[0] ? window_word[7:0] : window_word[15:8];
-	end
-endfunction
-
-function automatic [7:0] search_pattern_byte(input [4:0] index);
-	begin
-		search_pattern_byte = search_pattern >> {index, 3'b000};
-	end
-endfunction
-
-function automatic [7:0] search_window_byte(input [4:0] index);
-	begin
-		search_window_byte = search_window >> {index, 3'b000};
 	end
 endfunction
 
@@ -282,17 +270,21 @@ function automatic search_window_match(input [5:0] needle_length, input [7:0] la
 	integer needle_len_i;
 	reg [4:0] match_index_5;
 	reg [4:0] window_index_5;
+	reg [7:0] pattern_byte;
+	reg [7:0] window_byte;
 	begin
 		needle_len_i = {26'd0, needle_length};
 		search_window_match = (needle_length != 0);
 		for (match_index = 0; match_index < 32; match_index = match_index + 1) begin
 			if (match_index < needle_len_i) begin
 				match_index_5 = match_index[4:0];
+				pattern_byte = search_pattern >> {match_index_5, 3'b000};
 				if (match_index == (needle_len_i - 1)) begin
-					if (latest_byte != search_pattern_byte(match_index_5)) search_window_match = 1'b0;
+					if (latest_byte != pattern_byte) search_window_match = 1'b0;
 				end else begin
 					window_index_5 = 33 - needle_len_i + match_index;
-					if (search_window_byte(window_index_5) != search_pattern_byte(match_index_5))
+					window_byte = search_window >> {window_index_5, 3'b000};
+					if (window_byte != pattern_byte)
 						search_window_match = 1'b0;
 				end
 			end
