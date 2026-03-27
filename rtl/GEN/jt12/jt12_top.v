@@ -221,7 +221,7 @@ always @(posedge clk) begin
         ss_req_d <= 1'b0;
         ss_dout_reg <= 32'd0;
         ss_commit_pending <= 1'b0;
-        ss_shadow_bits <= '0;
+        ss_shadow_bits <= {JT12_SS_BITS_PADDED{1'b0}};
     end else begin
         ss_req_d <= ss_req;
 
@@ -531,7 +531,7 @@ if( use_lfo== 1) begin : gen_lfo
     );
 end else begin : gen_nolfo
     assign lfo_mod = 7'd0;
-    assign ss_lfo_state_out = '0;
+    assign ss_lfo_state_out = {JT12_LFO_BITS{1'b0}};
 end
 endgenerate
 
@@ -648,7 +648,7 @@ jt12_sh #(.width(10),.stages(4)) u_egpad(
     .clk_en ( clk_en    ),
     .ss_apply( 1'b0     ),
     .din    ( eg_V      ),
-    .ss_state_in( '0    ),
+    .ss_state_in( 40'd0 ),
     .ss_state_out(      ),
     .drop   ( eg_IX     )
 );
@@ -682,9 +682,9 @@ jt12_op #(.num_ch(num_ch)) u_op(
 `else
 assign op_result    = 'd0;
 assign op_result_hd = 'd0;
-assign ss_pg_state_out = '0;
-assign ss_eg_state_out = '0;
-assign ss_op_state_out = '0;
+assign ss_pg_state_out = {JT12_PG_BITS{1'b0}};
+assign ss_eg_state_out = {JT12_EG_BITS{1'b0}};
+assign ss_op_state_out = {JT12_OP_BITS{1'b0}};
 `endif
 
 /* verilator tracing_on */
