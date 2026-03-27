@@ -138,6 +138,8 @@ signal vram32_req_reg : std_logic;
 ----------------------------------------------------------------
 signal CRAM_ADDR_A	: std_logic_vector(5 downto 0);
 signal CRAM_ADDR_B	: std_logic_vector(5 downto 0);
+signal CRAM_ADDR_B_SS	: std_logic_vector(5 downto 0);
+signal CRAM_ADDR_B_RAM	: std_logic_vector(5 downto 0);
 signal CRAM_D_A		: std_logic_vector(8 downto 0);
 signal CRAM_D_B		: std_logic_vector(8 downto 0);
 signal CRAM_WE_A		: std_logic;
@@ -148,6 +150,8 @@ signal CRAM_DATA : std_logic_vector(8 downto 0);
 
 signal VSRAM0_ADDR_A    : std_logic_vector( 4 downto 0);
 signal VSRAM0_ADDR_B    : std_logic_vector( 4 downto 0);
+signal VSRAM0_ADDR_B_SS : std_logic_vector( 4 downto 0);
+signal VSRAM0_ADDR_B_RAM: std_logic_vector( 4 downto 0);
 signal VSRAM0_D_A       : std_logic_vector(10 downto 0);
 signal VSRAM0_D_B       : std_logic_vector(10 downto 0);
 signal VSRAM0_WE_A      : std_logic;
@@ -157,6 +161,8 @@ signal VSRAM0_Q_B       : std_logic_vector(10 downto 0);
 
 signal VSRAM1_ADDR_A    : std_logic_vector( 4 downto 0);
 signal VSRAM1_ADDR_B    : std_logic_vector( 4 downto 0);
+signal VSRAM1_ADDR_B_SS : std_logic_vector( 4 downto 0);
+signal VSRAM1_ADDR_B_RAM: std_logic_vector( 4 downto 0);
 signal VSRAM1_D_A       : std_logic_vector(10 downto 0);
 signal VSRAM1_D_B       : std_logic_vector(10 downto 0);
 signal VSRAM1_WE_A      : std_logic;
@@ -841,6 +847,10 @@ port map(
 	q_b			=> open
  );
 
+CRAM_ADDR_B_RAM <= CRAM_ADDR_B_SS when SS_PAUSE = '1' else CRAM_ADDR_B;
+VSRAM0_ADDR_B_RAM <= VSRAM0_ADDR_B_SS when SS_PAUSE = '1' else VSRAM0_ADDR_B;
+VSRAM1_ADDR_B_RAM <= VSRAM1_ADDR_B_SS when SS_PAUSE = '1' else VSRAM1_ADDR_B;
+
 cram : entity work.DualPortRAM
 generic map (
 	addrbits => 6,
@@ -848,7 +858,7 @@ generic map (
 )
 port map(
 	address_a	=> CRAM_ADDR_A,
-	address_b	=> CRAM_ADDR_B,
+	address_b	=> CRAM_ADDR_B_RAM,
 	clock		=> CLK,
 	data_a		=> CRAM_D_A,
 	data_b		=> CRAM_D_B,
@@ -866,7 +876,7 @@ generic map (
 )
 port map(
 	address_a   => VSRAM0_ADDR_A,
-	address_b   => VSRAM0_ADDR_B,
+	address_b   => VSRAM0_ADDR_B_RAM,
 	clock       => CLK,
 	data_a      => VSRAM0_D_A,
 	data_b      => VSRAM0_D_B,
@@ -883,7 +893,7 @@ generic map (
 )
 port map(
 	address_a   => VSRAM1_ADDR_A,
-	address_b   => VSRAM1_ADDR_B,
+	address_b   => VSRAM1_ADDR_B_RAM,
 	clock       => CLK,
 	data_a      => VSRAM1_D_A,
 	data_b      => VSRAM1_D_B,
@@ -900,13 +910,13 @@ begin
 		SS_REQ_D <= '0';
 		SS_ADDR_D <= (others => '0');
 		SS_DOUT_REG <= (others => '0');
-		CRAM_ADDR_B <= (others => '0');
+		CRAM_ADDR_B_SS <= (others => '0');
 		CRAM_D_B <= (others => '0');
 		CRAM_WE_B <= '0';
-		VSRAM0_ADDR_B <= (others => '0');
+		VSRAM0_ADDR_B_SS <= (others => '0');
 		VSRAM0_D_B <= (others => '0');
 		VSRAM0_WE_B <= '0';
-		VSRAM1_ADDR_B <= (others => '0');
+		VSRAM1_ADDR_B_SS <= (others => '0');
 		VSRAM1_D_B <= (others => '0');
 		VSRAM1_WE_B <= '0';
 	elsif rising_edge(CLK) then
@@ -920,19 +930,19 @@ begin
 			if SS_REQ = '1' then
 				SS_ADDR_D <= SS_ADDR;
 				if SS_ADDR(7) = '0' and SS_ADDR(6) = '0' then
-					CRAM_ADDR_B <= SS_ADDR(5 downto 0);
+					CRAM_ADDR_B_SS <= SS_ADDR(5 downto 0);
 					if SS_WR = '1' then
 						CRAM_D_B <= SS_DIN(11 downto 9) & SS_DIN(7 downto 5) & SS_DIN(3 downto 1);
 						CRAM_WE_B <= '1';
 					end if;
 				elsif SS_ADDR(7) = '0' and SS_ADDR(5) = '0' then
-					VSRAM0_ADDR_B <= SS_ADDR(4 downto 0);
+					VSRAM0_ADDR_B_SS <= SS_ADDR(4 downto 0);
 					if SS_WR = '1' then
 						VSRAM0_D_B <= SS_DIN(10 downto 0);
 						VSRAM0_WE_B <= '1';
 					end if;
 				elsif SS_ADDR(7) = '0' then
-					VSRAM1_ADDR_B <= SS_ADDR(4 downto 0);
+					VSRAM1_ADDR_B_SS <= SS_ADDR(4 downto 0);
 					if SS_WR = '1' then
 						VSRAM1_D_B <= SS_DIN(10 downto 0);
 						VSRAM1_WE_B <= '1';
