@@ -236,18 +236,6 @@ function automatic [7:0] staged_window_byte(input [4:0] index);
 	end
 endfunction
 
-function automatic [7:0] search_pattern_byte(input [4:0] index);
-	begin
-		search_pattern_byte = search_pattern >> {index, 3'b000};
-	end
-endfunction
-
-function automatic [7:0] search_window_byte(input [4:0] index);
-	begin
-		search_window_byte = search_window >> {index, 3'b000};
-	end
-endfunction
-
 function automatic [15:0] merge_window_byte(input [15:0] word_value, input byte_sel, input [7:0] byte_value);
 	begin
 		merge_window_byte = byte_sel ? {word_value[15:8], byte_value} : {byte_value, word_value[7:0]};
@@ -274,56 +262,10 @@ function automatic [255:0] set_packed_byte(input [255:0] vector_value, input [4:
 	end
 endfunction
 
-function automatic search_window_match(input [5:0] needle_length, input [7:0] latest_byte);
-	integer match_index;
-	integer needle_len_i;
-	reg [4:0] match_index_5;
-	reg [4:0] window_index_5;
-	begin
-		needle_len_i = {26'd0, needle_length};
-		search_window_match = (needle_length != 0);
-		for (match_index = 0; match_index < 32; match_index = match_index + 1) begin
-			if (match_index < needle_len_i) begin
-				match_index_5 = match_index[4:0];
-				if (match_index == (needle_len_i - 1)) begin
-					if (latest_byte != search_pattern_byte(match_index_5)) search_window_match = 1'b0;
-				end else begin
-					window_index_5 = 33 - needle_len_i + match_index;
-					if (search_window_byte(window_index_5) != search_pattern_byte(match_index_5))
-						search_window_match = 1'b0;
-				end
-			end
-		end
-	end
-endfunction
-
 task automatic clear_data_window;
 		begin
 			data_window <= 256'h0;
 		end
-	endtask
-
-task automatic capture_search_pattern;
-	reg [255:0] next_search_pattern;
-	begin
-		next_search_pattern = 256'h0;
-		for (i = 0; i < 32; i = i + 1)
-			next_search_pattern = set_packed_byte(next_search_pattern, i[4:0], staged_window_byte(i[4:0]));
-		search_pattern <= next_search_pattern;
-	end
-endtask
-
-	task automatic clear_search_window;
-		begin
-			search_window <= 256'h0;
-		end
-	endtask
-
-task automatic advance_search(input [7:0] byte_value, input [31:0] byte_addr);
-	reg [31:0] match_addr;
-	begin
-		for (i = 0; i < 16; i = i + 1) data_window[i] = 16'h0000;
-	end
 endtask
 
 task automatic set_error(input [15:0] err_code);
